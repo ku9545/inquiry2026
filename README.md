@@ -5,7 +5,7 @@
 - 서버 : Supabase 프로젝트 science-project-tracker (xiyzesbtxrpkistruaii). 교사 열쇠는 파일에 들어 있지 않음.
 
 ## 올리는 법 (Netlify Drop)
-1. app.netlify.com/drop 에 이 폴더(index.html, teacher.html)를 통째로 끌어다 놓음.
+1. inquiry2026에 이 폴더(index.html, teacher.html)를 통째로 끌어다 놓음.
 2. 나온 주소가 학생용 주소임. 교사용은 주소 끝에 /teacher.html 을 붙임.
 3. 학생에게는 학생용 주소만 알림(QR 권장). 아이패드에서 사파리로 열고 '홈 화면에 추가'하면 앱처럼 씀.
 

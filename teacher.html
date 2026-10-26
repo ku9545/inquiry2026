@@ -134,6 +134,329 @@ tailwind.config = { theme: { extend: {
 </div>
 
 <script>
+/*SIMRUN-BEGIN*/
+/* ============================================================
+   시뮬레이션 실행기 (학생용·교사용 공통) — 파이썬은 브라우저 안 Pyodide, HTML은 격리된 틀(iframe) 안에서 실행
+   ============================================================ */
+const SimRun = (() => {
+  const PYODIDE_BASE = 'https://cdn.jsdelivr.net/pyodide/v0.27.7/full/';
+  const MAX_CODE = 1500000, MAX_OUT = 200000, MAX_FIGS = 30;
+  const WORKER_SRC = [
+    "var BASE=" + JSON.stringify(PYODIDE_BASE) + ";",
+    "var FONT_URL='https://cdn.jsdelivr.net/npm/@fontsource/nanum-gothic@5.3.0/files/nanum-gothic-korean-400-normal.woff';",
+    "var py=null, ready=null;",
+    "function boot(){ if(!ready){ ready=(async function(){ importScripts(BASE+'pyodide.js'); py=await loadPyodide({indexURL:BASE}); self.cnImage=function(b){postMessage({type:'img',data:b})}; return py; })(); } return ready; }",
+    "onmessage=async function(e){",
+    "  var m=e.data;",
+    "  if(m.type==='warm'){ try{ await boot(); postMessage({type:'ready'}); }catch(err){ postMessage({type:'fatal',text:String(err&&err.message||err)}); } return; }",
+    "  if(m.type!=='run') return;",
+    "  var t0=Date.now();",
+    "  try{ postMessage({type:'status',text:'파이썬 준비 중… (처음 한 번은 10~30초)'}); await boot(); }",
+    "  catch(err){ postMessage({type:'fatal',text:String(err&&err.message||err)}); return; }",
+    "  var lines=(m.stdin||'').split('\\n'), li=0;",
+    "  py.setStdin({stdin:function(){ if(li<lines.length){ return lines[li++]; } return undefined; }, isatty:false});",
+    "  py.setStdout({batched:function(s){ postMessage({type:'out',text:s}); }});",
+    "  py.setStderr({batched:function(s){ postMessage({type:'err',text:s}); }});",
+    "  var ns=null;",
+    "  try{",
+    "    postMessage({type:'status',text:'필요한 패키지 확인 중…'});",
+    "    await py.loadPackagesFromImports(m.code,{messageCallback:function(t){ if(/Loading|Loaded/.test(t)) postMessage({type:'status',text:t}); }, errorCallback:function(t){ postMessage({type:'err',text:t}); }});",
+    "    ns=py.globals.get('dict')(); ns.set('__name__','__main__');",
+    "    var mpl=/matplotlib|pyplot|pylab/.test(m.code);",
+    "    if(mpl&&!self.cnFont){ try{ var fr=await fetch(FONT_URL); if(fr.ok){ py.FS.writeFile('/tmp/ng.woff', new Uint8Array(await fr.arrayBuffer())); await py.runPythonAsync(\"from fontTools.ttLib import TTFont as _T\\n_f=_T('/tmp/ng.woff'); _f.flavor=None; _f.save('/tmp/NanumGothic.ttf')\\nfrom matplotlib import font_manager as _fm\\n_fm.fontManager.addfont('/tmp/NanumGothic.ttf')\\n\"); self.cnFont=true; } }catch(_){ } }",
+    "    if(mpl&&self.cnFont){ await py.runPythonAsync(\"import matplotlib\\nmatplotlib.rcParams['font.family']=['NanumGothic','DejaVu Sans']\\nmatplotlib.rcParams['axes.unicode_minus']=False\\n\"); }",
+    "    if(mpl){ await py.runPythonAsync(\"import matplotlib\\nmatplotlib.use('Agg')\\nimport matplotlib.pyplot as _cn_plt, io as _cn_io, base64 as _cn_b64\\nfrom js import cnImage as _cn_img\\ndef _cn_show(*a, **k):\\n    for n in list(_cn_plt.get_fignums()):\\n        f = _cn_plt.figure(n)\\n        b = _cn_io.BytesIO()\\n        f.savefig(b, format='png', dpi=110, bbox_inches='tight')\\n        _cn_img(_cn_b64.b64encode(b.getvalue()).decode())\\n    _cn_plt.close('all')\\n_cn_plt.close('all')\\n_cn_plt.show = _cn_show\\n_cn_plt.pause = lambda *a, **k: None\\n\", {globals:ns}); }",
+    "    postMessage({type:'status',text:'실행 중…'});",
+    "    await py.runPythonAsync(m.code,{globals:ns, filename:'<학생 코드>'});",
+    "    if(mpl){ await py.runPythonAsync('_cn_show()',{globals:ns}); }",
+    "    postMessage({type:'done',ok:true,ms:Date.now()-t0});",
+    "  }catch(err){",
+    "    postMessage({type:'err',text:String(err&&err.message||err)});",
+    "    postMessage({type:'done',ok:false,ms:Date.now()-t0});",
+    "  }finally{ if(ns){ try{ ns.destroy(); }catch(_){} } }",
+    "};"
+  ].join('\n');
+
+  // 아이패드 '스마트 구두점'이 바꾼 따옴표·공백을 되돌림 (파이썬 오류의 흔한 원인)
+  const fixSmart = s => String(s).replace(/[‘’‚′]/g, "'").replace(/[“”„″]/g, '"').replace(/ /g, ' ').replace(/\r\n?/g, '\n');
+  const kindOf = name => /\.html?$/i.test(name || '') ? 'HTML' : /\.py$/i.test(name || '') ? 'Python' : null;
+  const guessKind = code => /^\s*(<!doctype|<html|<head|<body|<script|<div|<canvas|<svg|<style)/i.test(code) ? 'HTML' : 'Python';
+  function textToDataURL(text, type){
+    const bytes = new TextEncoder().encode(text); let bin = '';
+    for(let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    return 'data:' + type + ';base64,' + btoa(bin);
+  }
+  function dataURLToText(d){
+    const i = String(d).indexOf(','); if(i < 0) return '';
+    const head = d.slice(0, i), body = d.slice(i + 1);
+    if(!/;base64/i.test(head)) return decodeURIComponent(body);
+    const bin = atob(body), bytes = new Uint8Array(bin.length);
+    for(let j = 0; j < bin.length; j++) bytes[j] = bin.charCodeAt(j);
+    return new TextDecoder().decode(bytes);
+  }
+
+  let el = null, o = null, prevOverflow = '', worker = null, workerReady = false, running = false, outChars = 0, figCount = 0, lastFocus = null, tab = 'code', savedCode = '';
+  const $s = id => document.getElementById(id);
+  const btn = 'px-3 py-2 text-sm font-semibold rounded-2xl active:scale-95 transition-all duration-200';
+
+  function build(){
+    el = document.createElement('div');
+    el.id = 'simOv'; el.hidden = true;
+    el.className = 'fixed inset-0 z-50 bg-slate-900/60 flex items-stretch justify-center sm:p-4';
+    el.setAttribute('role', 'dialog'); el.setAttribute('aria-modal', 'true'); el.setAttribute('aria-labelledby', 'soTitle');
+    el.innerHTML = `
+    <div class="bg-white w-full max-w-6xl flex flex-col sm:rounded-2xl overflow-hidden shadow-xl">
+      <div class="px-4 py-3 border-b border-slate-200 flex flex-wrap items-center gap-2">
+        <div class="flex-1 min-w-0">
+          <p id="soTitle" class="font-bold truncate">시뮬레이션</p>
+          <p id="soStatus" class="text-xs text-slate-500 truncate" role="status"></p>
+        </div>
+        <button id="soRun" type="button" class="${btn} bg-mint-500 text-white">▶ 실행</button>
+        <button id="soStop" type="button" class="${btn} bg-rose-500 text-white" hidden>■ 멈춤</button>
+        <button id="soSave" type="button" class="${btn} bg-slate-800 text-white" hidden>팀에 올리기</button>
+        <button id="soClose" type="button" class="${btn} bg-white border border-slate-200 text-slate-600">닫기</button>
+      </div>
+      <div id="soNew" class="px-4 py-3 border-b border-slate-100 grid grid-cols-1 sm:grid-cols-[1fr_auto_auto] gap-2 items-center" hidden>
+        <input id="soT" type="text" maxlength="60" autocomplete="off" aria-label="시뮬레이션 제목" placeholder="제목 예) 발사 각도에 따른 포물선 운동" class="fieldbox w-full px-4 py-2.5 rounded-2xl bg-slate-50 text-base">
+        <select id="soKind" aria-label="코드 종류" class="fieldbox px-4 py-2.5 rounded-2xl bg-slate-50 text-base"><option value="Python">파이썬</option><option value="HTML">HTML</option></select>
+        <label for="soFile" class="${btn} bg-mint-50 text-mint-700 text-center cursor-pointer">파일 열기 (.py .html)</label>
+        <input id="soFile" type="file" class="hidden">
+      </div>
+      <div class="px-4 pt-3 flex gap-1.5" role="tablist">
+        <button type="button" role="tab" data-sotab="code" class="${btn}">코드</button>
+        <button type="button" role="tab" data-sotab="out" class="${btn}">실행 화면</button>
+      </div>
+      <div class="flex-1 min-h-0 relative">
+        <div id="soCodePane" class="absolute inset-0 flex flex-col p-3 sm:p-4 gap-2 overflow-y-auto">
+          <textarea id="soCode" spellcheck="false" autocapitalize="off" autocomplete="off" autocorrect="off" aria-label="코드"
+            class="fieldbox flex-1 min-h-[14rem] w-full px-4 py-3 rounded-2xl bg-slate-50 font-mono leading-relaxed whitespace-pre overflow-auto" style="font-size:16px;tab-size:4"
+            placeholder="여기에 파이썬 코드나 HTML 코드를 붙여 넣거나, 위의 '파일 열기'로 .py · .html 파일을 고름."></textarea>
+          <details id="soStdinBox" class="rounded-2xl bg-slate-50 px-4 py-2"><summary class="text-sm font-semibold text-slate-600 cursor-pointer">input()에 넣을 값 (한 줄에 하나씩)</summary>
+            <textarea id="soStdin" rows="3" aria-label="input 값" class="fieldbox mt-2 w-full px-3 py-2 rounded-xl bg-white font-mono" style="font-size:16px"></textarea></details>
+          <details class="rounded-2xl px-4 py-1"><summary class="text-xs font-semibold text-slate-500 cursor-pointer">도움말</summary><p class="text-xs text-slate-400 leading-relaxed mt-1">파이썬: print 결과와 matplotlib 그래프(plt.show)를 보여 줌. numpy·matplotlib·pandas·scipy·sympy 사용 가능. 처음 실행은 10~30초 걸림. 애니메이션은 마지막 그림만 나오고 turtle·pygame 창은 열리지 않음.
+            HTML: 한 파일 안에 코드가 모두 들어 있어야 함(따로 있는 css·js·그림 파일은 안 불러짐). 끝없이 도는 HTML 코드는 화면을 멈추게 할 수 있음 — 그때는 브라우저를 새로 고침.</p></details>
+        </div>
+        <div id="soOutPane" class="absolute inset-0 flex flex-col bg-white" hidden>
+          <div id="soFrame" class="flex-1 min-h-0" hidden></div>
+          <div id="soPy" class="flex-1 min-h-0 overflow-auto p-4" hidden>
+            <pre id="soConsole" class="font-mono text-sm whitespace-pre-wrap break-words leading-relaxed"></pre>
+            <div id="soFigs" class="mt-3 space-y-3"></div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+    document.body.appendChild(el);
+    const st = document.createElement('style'); st.textContent = '@media print{#simOv{display:none !important}}'; document.head.appendChild(st);
+    $s('soRun').addEventListener('click', run);
+    $s('soStop').addEventListener('click', stopPython);
+    $s('soClose').addEventListener('click', close);
+    $s('soSave').addEventListener('click', save);
+    $s('soCode').addEventListener('input', dirtyCheck);
+    $s('soKind').addEventListener('change', () => { setKind($s('soKind').value); });
+    $s('soFile').addEventListener('change', e => { loadFile(e.target.files && e.target.files[0]); e.target.value = ''; });
+    el.querySelectorAll('[data-sotab]').forEach(b => b.addEventListener('click', () => showTab(b.dataset.sotab)));
+    $s('soCode').addEventListener('keydown', e => {
+      if((e.ctrlKey || e.metaKey) && e.key === 'Enter'){ e.preventDefault(); run(); return; }
+      if(e.key === 'Tab' && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey){
+        e.preventDefault(); const t = e.target, a = t.selectionStart, b = t.selectionEnd;
+        t.value = t.value.slice(0, a) + '    ' + t.value.slice(b); t.selectionStart = t.selectionEnd = a + 4; dirtyCheck();
+      }
+    });
+    document.addEventListener('keydown', e => { if(e.key === 'Escape' && el && !el.hidden) close(); });
+  }
+
+  function status(t, kind){ const s = $s('soStatus'); s.textContent = t || ''; s.className = 'text-xs truncate ' + (kind === 'err' ? 'text-rose-600' : kind === 'ok' ? 'text-mint-700' : 'text-slate-500'); }
+  function showTab(t){
+    tab = t;
+    $s('soCodePane').hidden = t !== 'code'; $s('soOutPane').hidden = t !== 'out';
+    el.querySelectorAll('[data-sotab]').forEach(b => {
+      const on = b.dataset.sotab === t; b.setAttribute('aria-selected', on);
+      b.className = `${btn} ${on ? 'bg-slate-800 text-white' : 'bg-white text-slate-500 border border-slate-200'}`;
+    });
+  }
+  function setKind(k){
+    o.kind = k; $s('soKind').value = k;
+    $s('soStdinBox').hidden = k !== 'Python';
+    $s('soFrame').hidden = k !== 'HTML'; $s('soPy').hidden = k !== 'Python';
+  }
+  function dirtyCheck(){
+    if(!o) return;
+    const b = $s('soSave');
+    if(o.mode === 'new'){ b.hidden = false; b.textContent = '팀에 올리기'; return; }
+    b.hidden = !(o.canSave && $s('soCode').value !== savedCode);
+    b.textContent = '고친 코드 팀에 저장';
+  }
+
+  /* ---------- 파이썬 ---------- */
+  function newWorker(){
+    const w = new Worker(URL.createObjectURL(new Blob([WORKER_SRC], {type:'text/javascript'})));
+    workerReady = false; w.onmessage = onWorker;
+    w.onerror = e => { finish(); status('파이썬을 시작하지 못했음. 인터넷 연결을 확인할 것. ' + (e.message || ''), 'err'); };
+    return w;
+  }
+  function onWorker(e){
+    const m = e.data;
+    if(m.type === 'ready'){ workerReady = true; return; }
+    if(m.type === 'status'){ if(running) status(m.text); return; }
+    if(m.type === 'out'){ out(m.text + '\n', ''); return; }
+    if(m.type === 'err'){ out(cleanErr(m.text) + '\n', 'e'); return; }
+    if(m.type === 'img'){ fig(m.data); return; }
+    if(m.type === 'fatal'){ finish(); status('파이썬을 불러오지 못했음. 인터넷 연결을 확인하고 다시 실행할 것.', 'err'); try{ worker.terminate(); }catch(_){} worker = null; return; }
+    if(m.type === 'done'){
+      finish(); status(m.ok ? ('실행 끝 · ' + (m.ms/1000).toFixed(1) + '초') : '오류로 멈췄음. 빨간 글씨의 마지막 줄을 확인할 것.', m.ok ? 'ok' : 'err');
+      // 한 번 쓴 파이썬은 버리고 새것을 미리 준비함: 이번 실행이 바꾼 것이 다음 실행에 남지 않게
+      killWorker(); if(o && o.kind === 'Python') warm();
+    }
+  }
+  function cleanErr(t){
+    const keep = []; let skip = false;
+    String(t).split('\n').forEach(l => {
+      if(/File "\/lib\/python[^"]*_pyodide|File "\/lib\/python[^"]*pyodide\//.test(l)){ skip = true; return; }
+      if(skip && /^\s{4}/.test(l)) return;
+      skip = false; keep.push(l);
+    });
+    return keep.join('\n').replace(/\n+$/, '');
+  }
+  function out(text, cls){
+    if(outChars > MAX_OUT) return;
+    outChars += text.length;
+    if(outChars > MAX_OUT){ text = '\n… 출력이 너무 길어 여기까지만 보여 줌\n'; cls = 'n'; }
+    const sp = document.createElement('span'); if(cls === 'e') sp.className = 'text-rose-600'; else if(cls === 'n') sp.className = 'text-slate-400';
+    sp.textContent = text; $s('soConsole').appendChild(sp);
+    const box = $s('soPy'); box.scrollTop = box.scrollHeight;
+  }
+  function fig(b64){
+    figCount++;
+    if(figCount > MAX_FIGS){ if(figCount === MAX_FIGS + 1) out('… 그림이 너무 많아 ' + MAX_FIGS + '장까지만 보여 줌\n', 'n'); return; }
+    const img = document.createElement('img'); img.alt = '그래프 ' + figCount; img.className = 'max-w-full rounded-xl border border-slate-100'; img.src = 'data:image/png;base64,' + b64;
+    $s('soFigs').appendChild(img);
+  }
+  function finish(){ running = false; $s('soRun').disabled = false; $s('soStop').hidden = true; }
+  function stopPython(){
+    if(!running) return;
+    if(worker){ worker.terminate(); worker = null; }
+    finish(); out('\n■ 멈춤을 눌러 실행을 중단했음\n', 'n'); status('멈췄음. 다시 실행하면 파이썬을 새로 준비함.');
+  }
+
+  /* ---------- 실행 ---------- */
+  function run(){
+    if(!o) return;
+    let code = $s('soCode').value;
+    if(!code.trim()){ status('코드를 먼저 넣어 주세요.', 'err'); showTab('code'); return; }
+    if(o.kind === 'Python'){
+      const fixed = fixSmart(code);
+      if(fixed !== code.replace(/\r\n?/g, '\n')){ $s('soCode').value = fixed; dirtyCheck(); }
+      code = fixed;
+      showTab('out');
+      $s('soConsole').textContent = ''; $s('soFigs').textContent = ''; outChars = 0; figCount = 0;
+      if(!worker) worker = newWorker();
+      running = true; $s('soRun').disabled = true; $s('soStop').hidden = false;
+      status(workerReady ? '실행 중…' : '파이썬 준비 중… (처음 한 번은 10~30초)');
+      worker.postMessage({type:'run', code, stdin: fixSmart($s('soStdin').value)});
+    } else {
+      showTab('out');
+      const wrap = $s('soFrame'); wrap.textContent = '';
+      const f = document.createElement('iframe');
+      f.title = 'HTML 실행 화면'; f.className = 'w-full h-full border-0 bg-white';
+      // allow-same-origin 을 주지 않음: 올린 코드가 이 앱의 로그인 정보에 손댈 수 없음
+      f.setAttribute('sandbox', 'allow-scripts allow-forms allow-modals allow-pointer-lock allow-downloads');
+      f.setAttribute('allow', 'fullscreen; accelerometer; gyroscope');
+      f.srcdoc = code.replace(/\r\n?/g, '\n');
+      wrap.appendChild(f);
+      status('실행 중. 코드를 고친 뒤 다시 실행을 누르면 새로 고침.', 'ok');
+    }
+  }
+
+  function loadFile(f){
+    if(!f || !o) return;
+    if(f.size > MAX_CODE){ status('파일이 너무 큼 (1.5MB까지).', 'err'); return; }
+    const k = kindOf(f.name);
+    const r = new FileReader();
+    r.onload = () => {
+      const text = String(r.result || '');
+      $s('soCode').value = text;
+      setKind(k || guessKind(text));
+      o.fname = f.name;
+      if(o.mode === 'new' && !$s('soT').value.trim()) $s('soT').value = f.name.replace(/\.[^.]+$/, '').slice(0, 60);
+      dirtyCheck(); status(f.name + '을(를) 불러왔음. 실행을 눌러 확인한 뒤 팀에 올릴 것.');
+      showTab('code');
+    };
+    r.onerror = () => status('파일을 읽지 못했음.', 'err');
+    r.readAsText(f, 'utf-8');
+  }
+
+  async function save(){
+    if(!o) return;
+    let code = $s('soCode').value;
+    if(!code.trim()){ status('코드를 먼저 넣어 주세요.', 'err'); return; }
+    if(o.kind === 'Python') code = fixSmart(code); else code = code.replace(/\r\n?/g, '\n');
+    if(new Blob([code]).size > MAX_CODE){ status('코드가 너무 김 (1.5MB까지).', 'err'); return; }
+    const b = $s('soSave'); b.disabled = true; status('팀에 올리는 중…');
+    try{
+      if(o.mode === 'new'){
+        const title = $s('soT').value.trim();
+        if(!title){ status('제목을 적어 주세요.', 'err'); $s('soT').focus(); return; }
+        const fname = o.fname || (title.replace(/[\\/:*?"<>|]/g, '').slice(0, 40) || 'simulation') + (o.kind === 'HTML' ? '.html' : '.py');
+        const r = await o.onUpload({title, kind:o.kind, code, fname});
+        if(!r || !r.ok){ status((r && r.msg) || '올리지 못했음. 다시 시도할 것.', 'err'); return; }
+        // 올린 뒤에는 '보기' 상태로 바뀜 (고치면 다시 저장 가능)
+        o.mode = 'view'; o.rowId = r.rowId; o.onSave = r.onSave; o.canSave = !!r.onSave;
+        $s('soNew').hidden = true; $s('soTitle').textContent = `${title} · ${o.kind === 'HTML' ? 'HTML' : '파이썬'}`;
+        savedCode = code; $s('soCode').value = code; dirtyCheck();
+        status('팀에 올렸음. 닫은 뒤 카드의 설명 칸도 채울 것.', 'ok');
+      } else {
+        const r = await o.onSave(code);
+        if(!r || !r.ok){ status((r && r.msg) || '저장하지 못했음. 다시 시도할 것.', 'err'); return; }
+        savedCode = code; $s('soCode').value = code; dirtyCheck(); status('고친 코드를 팀에 저장했음.', 'ok');
+      }
+    }catch(e){ status('올리지 못했음. 인터넷 연결을 확인할 것.', 'err'); }
+    finally{ b.disabled = false; }
+  }
+
+  // opts: {mode:'new'|'view', title, kind, canSave, load:async()=>code, onSave:async(code)=>{ok,msg}, onUpload:async({title,kind,code,fname})=>{ok,msg,rowId,onSave}, autorun, startTab}
+  async function open(opts){
+    if(!el) build();
+    if(running) stopPython();
+    killWorker();   // 열 때마다 새 파이썬: 앞 시뮬레이션이 바꿔 놓은 것이 남지 않게
+    o = Object.assign({kind:'Python'}, opts);
+    lastFocus = document.activeElement;
+    if(el.hidden) prevOverflow = document.body.style.overflow;
+    el.hidden = false; document.body.style.overflow = 'hidden';
+    $s('soFrame').textContent = ''; $s('soConsole').textContent = ''; $s('soFigs').textContent = ''; $s('soStdin').value = '';
+    $s('soNew').hidden = o.mode !== 'new';
+    $s('soTitle').textContent = o.mode === 'new' ? '새 시뮬레이션 올리기' : `${o.title || '시뮬레이션'} · ${o.kind === 'HTML' ? 'HTML' : '파이썬'}`;
+    $s('soCode').readOnly = o.mode !== 'new' && !o.canSave;
+    setKind(o.kind); showTab(o.startTab || 'code');
+    savedCode = ''; $s('soCode').value = ''; $s('soT').value = ''; o.fname = o.fname || '';
+    dirtyCheck();
+    if(o.mode === 'new'){ status('코드를 붙여 넣거나 파일을 열고, 실행으로 확인한 뒤 팀에 올림.'); $s('soT').focus(); warm(); return; }
+    status('코드를 불러오는 중…'); $s('soRun').disabled = true;
+    try{
+      const code = await o.load();
+      if(!el || el.hidden) return;
+      savedCode = code; $s('soCode').value = code; dirtyCheck(); $s('soRun').disabled = false;
+      status(o.canSave ? '코드를 고친 뒤 실행해 보고, 괜찮으면 저장을 누름.' : '');
+      if(o.autorun) run(); else if(o.kind === 'Python') warm();
+    }catch(e){ $s('soRun').disabled = false; status((e && e.msg) || '코드를 불러오지 못했음. 다시 열어 볼 것.', 'err'); }
+    $s('soClose').focus();
+  }
+  function killWorker(){ if(worker){ try{ worker.terminate(); }catch(_){} worker = null; workerReady = false; } }
+  function warm(){ if(!worker && o && o.kind === 'Python'){ worker = newWorker(); worker.postMessage({type:'warm'}); } }
+  function close(){
+    if(!el || el.hidden) return;
+    if(o && o.mode === 'view' && o.canSave && $s('soCode').value !== savedCode && !confirm('저장하지 않은 코드 수정이 있음. 그래도 닫을까요?')) return;
+    if(o && o.mode === 'new' && $s('soCode').value.trim() && !confirm('아직 팀에 올리지 않았음. 그래도 닫을까요?')) return;
+    if(running) stopPython();
+    killWorker();
+    $s('soFrame').textContent = '';   // 애니메이션 멈춤
+    el.hidden = true; document.body.style.overflow = prevOverflow; o = null;
+    if(lastFocus && lastFocus.focus && document.contains(lastFocus)) lastFocus.focus();
+  }
+  const isOpen = () => !!(el && !el.hidden);
+  return {open, close, isOpen, textToDataURL, dataURLToText};
+})();
+/*SIMRUN-END*/
+
 /* 문항 정의 — 학생용(index.html)과 같아야 함 */
 const SECTIONS = [
 { id:'team', num:'0', tab:'팀', title:'팀 정보', desc:'우리 팀이 누구이고, 무엇을 해결하려는지 한 줄로 정리합니다.',
@@ -210,10 +533,18 @@ const SECTIONS = [
     {k:'sim_t', label:'[시뮬레이션] 사용한 도구', type:'text', when:['methods','AI 시뮬레이션'], ph:'예) Claude, PhET, 파이썬 코드'},
     {k:'sim_c', label:'[시뮬레이션] 설정한 조건', type:'textarea', rows:3, when:['methods','AI 시뮬레이션']},
     {k:'sim_r', label:'[시뮬레이션] 결과와 해석', type:'textarea', rows:4, when:['methods','AI 시뮬레이션'], hint:'시뮬레이션 결과를 그대로 믿지 말고, 현실과 다를 수 있는 지점도 함께 적습니다.'},
+    {k:'sim_go', label:'[시뮬레이션] 만든 시뮬레이션 올리고 바로 보기', type:'simlink', when:['methods','AI 시뮬레이션'], noProgress:true},
 
     {k:'lit', label:'[문헌] 근거로 삼은 문헌', type:'list', addLabel:'문헌 추가', when:['methods','문헌 연구'],
       sub:[{k:'t', label:'제목·저자', type:'text'},{k:'u', label:'출처', type:'text'},{k:'link', label:'우리 주장과 어떻게 연결되는가', type:'textarea', rows:2}]},
     {k:'lit_c', label:'[문헌] 종합하면 우리 아이디어는 타당한가', type:'textarea', rows:3, when:['methods','문헌 연구']}
+  ]},
+
+{ id:'sim', num:'5+', tab:'시뮬레이션', title:'시뮬레이션 올리고 바로 보기', desc:'파이썬 코드나 HTML 코드·파일을 올리면 아이패드에서도 여기서 바로 실행해 볼 수 있습니다. 팀원과 선생님도 같은 시뮬레이션을 열어 봅니다. 5. 검증의 AI 시뮬레이션과 이어집니다.',
+  fields:[
+    {k:'items', label:'우리 팀 시뮬레이션', type:'sims', countWhen:['verify.methods','AI 시뮬레이션'],
+      hint:'올린 뒤 카드마다 설명을 꼭 채웁니다 — 무엇을 시뮬레이션했는지, 어떤 조건(값)을 바꿔 보았는지, 결과가 무엇을 보여 주는지, 현실과 다를 수 있는 점.',
+      sub:[{k:'t', label:'제목'},{k:'kind', label:'종류'},{k:'fname', label:'코드 파일'},{k:'desc', label:'설명'}]}
   ]},
 
 { id:'user', num:'6', tab:'사용자 피드백', title:'당사자에게 확인받기', desc:'검증한 내용을 실제 당사자(혹은 그 입장을 대신할 수 있는 사람)에게 들고 갑니다.',
@@ -257,9 +588,16 @@ function visible(f, sec, cells){
   const v = cells[sec.id + '.' + f.when[0]];
   return Array.isArray(v) && v.includes(f.when[1]);
 }
+// 학생용 counts()와 같아야 함
+function counts(f, sec, cells){
+  if(f.noProgress) return false;
+  if(!visible(f, sec, cells)) return false;
+  if(f.countWhen){ const v = cells[f.countWhen[0]]; if(!(Array.isArray(v) && v.includes(f.countWhen[1]))) return false; }
+  return true;
+}
 function progress(cells){
   let total = 0, done = 0;
-  SECTIONS.forEach(sec => sec.fields.forEach(f => { if(!visible(f, sec, cells)) return; total++; if(filled(cells[sec.id+'.'+f.k])) done++; }));
+  SECTIONS.forEach(sec => sec.fields.forEach(f => { if(!counts(f, sec, cells)) return; total++; if(filled(cells[sec.id+'.'+f.k])) done++; }));
   return total ? Math.round(done/total*100) : 0;
 }
 function leaderOf(c){ const l = c['team.leader']; return l && typeof l === 'object' ? [l.id, l.n].filter(Boolean).join(' ') : ''; }
@@ -353,10 +691,18 @@ $('fWeek').addEventListener('change', renderAll);
 const filledRow = r => filled([r]);
 function sheetHTML(cells){
   return SECTIONS.map(sec => {
-    const items = sec.fields.filter(f => visible(f, sec, cells)).map(f => {
+    const items = sec.fields.filter(f => visible(f, sec, cells) && f.type !== 'simlink').map(f => {
       const v = cells[sec.id+'.'+f.k];
       let body;
       if(!filled(v)) body = '<p class="text-slate-300 text-sm">비어 있음</p>';
+      else if(f.type === 'sims') body = `<div class="space-y-3">${v.filter(r => r && r._id).map((r, i) => `<div class="rounded-xl bg-slate-50 p-3">
+          <div class="flex flex-wrap items-center gap-2"><span class="text-xs font-bold text-mint-600">${i+1}</span>
+            <span class="text-xs font-bold px-2 py-0.5 rounded-full ${r.kind === 'HTML' ? 'bg-amber-50 text-amber-700' : 'bg-sky-50 text-sky-700'}">${r.kind === 'HTML' ? 'HTML' : '파이썬'}</span>
+            <b class="text-sm min-w-0 flex-1 truncate">${esc(r.t || '제목 없음')}</b>
+            ${r.fid ? `<button type="button" data-simrun="${esc(r.fid)}" data-simkind="${r.kind === 'HTML' ? 'HTML' : 'Python'}" data-simtitle="${esc(r.t || '')}" class="no-print px-3 py-1.5 text-xs font-semibold rounded-xl bg-mint-500 text-white">▶ 실행</button>
+            <button type="button" data-simcode="${esc(r.fid)}" data-simkind="${r.kind === 'HTML' ? 'HTML' : 'Python'}" data-simtitle="${esc(r.t || '')}" class="no-print px-3 py-1.5 text-xs font-semibold rounded-xl bg-white border border-slate-200">코드</button>` : ''}</div>
+          <p class="text-sm whitespace-pre-wrap leading-relaxed mt-2">${String(r.desc||'').trim() ? esc(r.desc) : '<span class="text-rose-400">설명이 비어 있음</span>'}</p>
+        </div>`).join('')}</div>`;
       else if(f.type === 'checks' && Array.isArray(v)) body = `<p class="text-sm">${v.map(esc).join(' · ')}</p>`;
       else if(Array.isArray(v)) body = `<ol class="list-decimal pl-5 space-y-1.5 text-sm">${v.filter(filledRow).map(row => `<li>${(f.sub||[]).map(s => row && String(row[s.k]||'').trim() ? `<span class="text-slate-500">${esc(s.label)}:</span> <span class="whitespace-pre-wrap">${esc(row[s.k])}</span>` : '').filter(Boolean).join(' <span class="text-slate-300">/</span> ') || '<span class="text-slate-300">빈 줄</span>'}</li>`).join('')}</ol>`;
       else if(typeof v === 'object') body = `<p class="text-sm space-y-0.5">${(f.sub||[]).map(s => String(v[s.k]||'').trim() ? `<span class="text-slate-500">${esc(s.label)}:</span> <span class="whitespace-pre-wrap">${esc(v[s.k])}</span>` : '').filter(Boolean).join('<br>')}</p>`;
@@ -418,7 +764,19 @@ function closeDetail(){
 }
 $('dClose').addEventListener('click', closeDetail);
 $('detailWrap').addEventListener('click', e => { if(e.target.id === 'detailWrap') closeDetail(); });
-document.addEventListener('keydown', e => { if(e.key === 'Escape' && !$('detailWrap').hidden) closeDetail(); });
+document.addEventListener('keydown', e => { if(e.key === 'Escape' && !$('detailWrap').hidden && !SimRun.isOpen()) closeDetail(); });
+$('dBody').addEventListener('click', e => {
+  const b = e.target.closest('[data-simrun],[data-simcode]'); if(!b) return;
+  const fid = b.dataset.simrun || b.dataset.simcode;
+  SimRun.open({mode:'view', title:b.dataset.simtitle || '제목 없음', kind:b.dataset.simkind, canSave:false, autorun:!!b.dataset.simrun, startTab:b.dataset.simrun ? 'out' : 'code',
+    load: async () => {
+      if(simCache[fid] != null) return simCache[fid];
+      const r = await rpc('ws_t_file_get', {p_key: KEY, p_id: fid});
+      if(!r || !r.ok) throw {msg: r && r.error === 'not_found' ? '코드 파일을 찾지 못했음.' : '코드를 불러오지 못했음.'};
+      return (simCache[fid] = SimRun.dataURLToText(r.data));
+    }});
+});
+const simCache = {};
 $('dPrint').addEventListener('click', () => window.print());
 
 /* 첨부: 누르면 받아 온 뒤 '열기' 링크로 바뀜 (아이패드는 비동기 뒤 새 창을 막기 때문) */
@@ -427,8 +785,9 @@ const SAFE_VIEW = /^(image\/(jpeg|png|gif|webp|heic|heif)|application\/pdf|text\
 function secTitle(id){ const s = SECTIONS.find(x => x.id === id); return s ? `${s.num}. ${s.tab}` : id; }
 function renderFiles(t){
   const ul = $('dFiles');
-  if(!t.files.length){ ul.innerHTML = '<li class="text-slate-400">첨부가 없음.</li>'; return; }
-  ul.innerHTML = t.files.map(f => `<li class="flex items-center justify-between gap-2 bg-slate-50 rounded-xl px-3 py-2">
+  const list = t.files.filter(f => f.sec !== 'simcode');   // 시뮬레이션 코드는 워크시트의 '5+ 시뮬레이션'에서 실행
+  if(!list.length){ ul.innerHTML = '<li class="text-slate-400">첨부가 없음.</li>'; return; }
+  ul.innerHTML = list.map(f => `<li class="flex items-center justify-between gap-2 bg-slate-50 rounded-xl px-3 py-2">
     <span class="min-w-0 truncate"><span class="text-xs text-slate-400 mr-1">${esc(secTitle(f.sec))}</span>${esc(f.name)} <span class="text-xs text-slate-400">${Math.max(1, Math.round(f.size/1024))}KB</span></span>
     <span data-fwrap="${f.id}">${blobURLs[f.id] ? `<a href="${blobURLs[f.id]}" target="_blank" rel="noopener"${SAFE_VIEW.test(f.type||'')?'':` download="${esc(f.name)}"`} class="px-3 py-1.5 text-xs font-semibold rounded-xl bg-mint-500 text-white">열기</a>` : `<button type="button" data-file="${f.id}" class="px-3 py-1.5 text-xs font-semibold rounded-xl bg-white border border-slate-200">준비</button>`}</span>
   </li>`).join('');

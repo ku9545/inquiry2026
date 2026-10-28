@@ -126,6 +126,10 @@ tailwind.config = {
         <label for="mdNote" class="block text-sm font-bold mb-1.5">이번 주 한 것</label>
         <textarea id="mdNote" rows="4" maxlength="2000" class="fieldbox w-full px-4 py-2.5 rounded-2xl bg-slate-50 text-base" placeholder="이번 주에 팀이 한 일과 다음 주 계획"></textarea>
       </div>
+      <div>
+        <p class="block text-sm font-bold mb-1.5">이번 주 각자 한 일 <span class="text-xs font-normal text-slate-400">(✎ 이번 주 한 일 탭)</span></p>
+        <ul id="mdWork" class="text-sm space-y-1 rounded-2xl bg-slate-50 px-4 py-3"></ul>
+      </div>
       <p id="mdMsg" class="text-sm" role="status"></p>
       <div class="flex gap-2">
         <button id="mdOk" type="button" class="flex-1 px-4 py-3 text-base font-semibold rounded-2xl bg-mint-500 text-white shadow-sm active:scale-95 transition-all duration-200">제출하기</button>
@@ -159,6 +163,13 @@ const SECTIONS = [
       hint:'한두 문장으로. 뒤에서 더 다듬게 되니 지금은 거칠어도 괜찮습니다.'}
   ]},
 
+{ id:'log', num:'✎', tab:'이번 주 한 일', title:'이번 주 각자 한 일', desc:'실험 수업 시간에 조장과 조원이 각자 무엇을 했는지 한두 줄로 적습니다. 매주 \'이번 주 제출\' 때 함께 제출되고, 선생님이 실시간으로 봅니다. 이름은 0. 팀 정보의 팀장·팀원에서 자동으로 나옵니다.',
+  fields:[
+    {k:'work', label:'이번 주 각자 한 일', type:'worklog', noProgress:true,
+      hint:'예) 선행 연구 논문 2편을 찾아 요약함 · 실험 재료 가격을 조사해 표로 정리함 · 시뮬레이션 코드의 조건을 바꿔 3번 돌려 봄',
+      sub:[{k:'who', label:'이름'},{k:'role', label:'역할'},{k:'did', label:'한 일', type:'textarea'}]}
+  ]},
+
 { id:'why', num:'1', tab:'왜?', title:'왜 해야 하지 — 설득하기', desc:'이 문제를 왜 지금 풀어야 하는지, 읽는 사람이 공감하도록 설득합니다.',
   fields:[
     {k:'scene', label:'문제 상황 설명', type:'textarea', rows:4, hint:'언제, 어디서, 누가 곤란해지는지 장면이 그려지게 씁니다.'},
@@ -188,6 +199,23 @@ const SECTIONS = [
     {k:'stmt', label:'우리가 정의한 문제 (한 문장)', type:'textarea', rows:2,
       hint:'“○○한 상황의 △△가, □□ 때문에 ◇◇하지 못한다” 형태로 써 보면 잘 잡힙니다.'},
     {k:'seed', label:'그래서 떠오른 우리 아이디어의 방향', type:'textarea', rows:3}
+  ]},
+
+{ id:'know', num:'3-1', tab:'알아야 할 지식', title:'알아야 할 지식 (선행 연구)', desc:'우리 문제를 이해하고, 우리 아이디어를 검증하는 데 꼭 알아야 하는 지식을 모읍니다. 관련 용어를 쓰고 간단히 설명한 뒤, 어디서 알게 되었는지 출처를 남깁니다. 출처 칸을 채우면 APA 형식으로 자동 정리됩니다.',
+  fields:[
+    {k:'items', label:'용어와 설명', type:'refs', addLabel:'용어 추가',
+      hint:'예) 용어: 계면활성제 · 설명: 물과 기름 양쪽에 붙는 분자라 기름때를 물에 씻겨 나가게 한다 · 어디에 필요한가: 세척 효과를 비교하는 실험 설계',
+      sub:[{k:'w', label:'용어', type:'text', ph:'예) 계면활성제'},
+           {k:'d', label:'간단한 설명', type:'textarea', rows:2, ph:'내 말로 한두 문장'},
+           {k:'rel', label:'우리 문제·아이디어의 어디에 필요한가', type:'text', ph:'예) 세척 실험의 변인 정하기'},
+           {k:'sk', label:'출처 종류', type:'select', opts:['웹·기사','논문','책']},
+           {k:'au', label:'저자', type:'text'},
+           {k:'y', label:'연도', type:'text'},
+           {k:'t', label:'제목', type:'text'},
+           {k:'src', label:'학술지·사이트·출판사', type:'text'},
+           {k:'vol', label:'권(호)', type:'text'},
+           {k:'pg', label:'쪽', type:'text'},
+           {k:'url', label:'링크·DOI', type:'text'}]}
   ]},
 
 { id:'idea', num:'4', tab:'아이디어', title:'아이디어 내기', desc:'비난도 평가도 금지. 일단 많이 모으고, 그다음 묶습니다.',
@@ -246,12 +274,104 @@ const SECTIONS = [
   ]}
 ];
 
+/*SHARED-BEGIN*/
+/* 출처를 APA 형식으로 정리 (학생용·교사용 공통) */
+const APA = (() => {
+  const esc2 = x => String(x == null ? '' : x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const tr = x => String(x == null ? '' : x).replace(/\s+/g, ' ').trim();
+  const hasLatin = x => /[A-Za-z]/.test(x) && !/[가-힣]/.test(x);
+  // 영문 이름 → 'Kim, H. J.' / 한글 이름은 그대로
+  const PARTICLE = /^(van|von|de|der|den|da|di|du|del|della|le|la|st\.?)$/i;
+  const GROUP = /\b(organi[sz]ation|institute|ministry|university|college|school|association|department|agency|council|society|cent(er|re)|committee|foundation|office|bureau|corporation|company|inc|ltd|group|board|service|commission|federation|academy|museum|library|government|national|international|korea|united|nations)\b/i;
+  const isInit = x => /^([A-Z]\.?(-[A-Z]\.?)?\s*)+$/.test(x) && x.replace(/[\s.\-]/g, '').length <= 3;
+  const isWord = x => /^[A-Za-z][A-Za-z'’\-]*$/.test(x);
+  // 영문 이름 → 'Kim, H. J.' (단체 이름·한글 이름은 적은 그대로)
+  function person(n){
+    n = tr(n); if(!n) return '';
+    if(!hasLatin(n)) return n.replace(/\.$/, '');
+    if(GROUP.test(n) || n.split(' ').length > 4) return n.replace(/\.$/, '');
+    if(/,/.test(n)){ const [last, rest] = n.split(/,(.+)/); return tr(last) + ', ' + initials(rest); }
+    const parts = n.replace(/\.$/, '').split(' '); if(parts.length === 1) return n;
+    if(parts.length === 2 && isInit(parts[1]) && !isInit(parts[0])) return parts[0] + ', ' + initials(parts[1]);   // 'Kim H'
+    let i = parts.length - 1; while(i > 1 && PARTICLE.test(parts[i-1])) i--;            // 'Ludwig van Beethoven' → 'van Beethoven'
+    return parts.slice(i).join(' ') + ', ' + initials(parts.slice(0, i).join(' '));
+  }
+  function initials(x){   // 'Jean-Paul' → 'J.-P.', 'H.J.' → 'H. J.'
+    return tr(x).replace(/\./g, ' ').split(/\s+/).filter(Boolean).map(w => w.split('-').map(p => p[0].toUpperCase() + '.').join('-')).join(' ');
+  }
+  function authors(raw){
+    let toks = tr(raw).split(/\s*(?:;|·|\/|\n|,|\band\b|&)\s*/i).map(tr).filter(Boolean);
+    // 'Kim, H.' · 'Kim, Hyunjin' 처럼 '성, 이름(이니셜)'으로 쓴 것은 한 사람으로 다시 붙임
+    const out = [];
+    for(let i = 0; i < toks.length; i++){
+      const x = toks[i], y = toks[i+1];
+      if(out.length && GROUP.test(out[out.length-1]) && hasLatin(x) && x.split(' ').length <= 2 && GROUP.test(x)){ out[out.length-1] += ', ' + x; continue; }   // 'National Institute of …, Korea'
+      if(y !== undefined && hasLatin(x) && isWord(x) && !GROUP.test(x) && hasLatin(y) && (isInit(y) || isWord(y)) && !GROUP.test(y)){ out.push(x + ', ' + y); i++; }
+      else out.push(x);
+    }
+    let list = out.map(person).filter(Boolean);
+    if(!list.length) return '';
+    const allLatin = list.every(hasLatin);
+    if(list.length === 1) return list[0];
+    if(list.length > 20) return list.slice(0, 19).join(', ') + ', … ' + list[list.length-1];   // APA 7: 21명 이상은 19명 … 마지막 사람
+    if(!allLatin) return list.join(', ');
+    if(list.length === 2) return `${list[0]}, & ${list[1]}`;
+    return list.slice(0, -1).join(', ') + ', & ' + list[list.length-1];
+  }
+  const end = x => /[.?!]$/.test(x) ? x : x + '.';
+  function link(u){
+    u = tr(u); if(!u) return '';
+    if(/^10\.\d{4,}\//.test(u)) return 'https://doi.org/' + u;
+    if(/^doi:\s*/i.test(u)) return 'https://doi.org/' + u.replace(/^doi:\s*/i, '');
+    if(/^www\./i.test(u)) return 'https://' + u;
+    return u;
+  }
+  const safeUrl = u => /^https?:\/\/[^\s<>"']+$/i.test(u) ? u : '';
+  function date(y){ y = tr(y); return y ? y.replace(/^\(|\)$/g, '') : 'n.d.'; }
+  function volIss(v){ v = tr(v).replace(/권|호/g, ''); const m = v.match(/^(\d+)\s*[\(\s,]\s*(\d+)\)?$/); return m ? {vol:m[1], iss:m[2]} : {vol:v, iss:''}; }
+  // r: {sk, au, y, t, src, vol, pg, url}  →  {html, text, url}
+  function format(r){
+    const sk = r.sk || '웹·기사', au = authors(r.au), y = date(r.y), title = tr(r.t), src = tr(r.src), url = link(r.url), su = safeUrl(url);
+    const parts = [], txt = [];
+    const push = (h, x) => { parts.push(h); txt.push(x); };
+    if(sk === '논문'){
+      const head = au || title; if(!head) return null;
+      push(esc2(au || end(title)) + ` (${esc2(y)}).`, (au || end(title)) + ` (${y}).`);
+      if(au && title) push(esc2(end(title)), end(title));
+      if(src){
+        const vi = volIss(r.vol), pg = tr(r.pg).replace(/\s*[-~]\s*/, '–').replace(/^pp?\.\s*/i, '');
+        let h = `<i>${esc2(src)}</i>`, x = src;
+        if(vi.vol){ h += `, <i>${esc2(vi.vol)}</i>`; x += `, ${vi.vol}`; }
+        if(vi.iss){ h += `(${esc2(vi.iss)})`; x += `(${vi.iss})`; }
+        if(pg){ h += `, ${esc2(pg)}`; x += `, ${pg}`; }
+        push(h + '.', x + '.');
+      }
+    } else if(sk === '책'){
+      const head = au || title; if(!head) return null;
+      push(esc2(au || end(title)) + ` (${esc2(y)}).`, (au || end(title)) + ` (${y}).`);
+      if(au && title) push(`<i>${esc2(end(title))}</i>`, end(title));
+      if(src) push(esc2(end(src)), end(src));
+    } else {
+      const head = au || src || title; if(!head && !url) return null;
+      const who = au || src;
+      if(who){ push(esc2(who) + ` (${esc2(y)}).`, who + ` (${y}).`); if(title) push(`<i>${esc2(end(title))}</i>`, end(title)); }
+      else if(title){ push(`<i>${esc2(end(title))}</i> (${esc2(y)}).`, end(title) + ` (${y}).`); }
+      if(src && au) push(esc2(end(src)), end(src));
+    }
+    if(url){ push(su ? `<a href="${esc2(su)}" target="_blank" rel="noopener noreferrer" class="text-mint-700 underline break-all">${esc2(url)}</a>` : esc2(url), url); }
+    return {html: parts.join(' '), text: txt.join(' '), url: su};
+  }
+  return {format, authors};
+})();
+/*SHARED-END*/
+
+
 /* ============================================================
    2. 서버 연결 (Supabase)
    ============================================================ */
 const API_URL = 'https://xiyzesbtxrpkistruaii.supabase.co';
 const API_KEY = 'sb_publishable_c3OU2e6nmA5DNKhqfLbxvQ_GFZiw47u';
-const DEBOUNCE = 1000, POLL_MS = 5000, SINCE_MARGIN = 5000;
+const DEBOUNCE = 500, POLL_MS = 1000, POLL_IDLE = 3000, SINCE_MARGIN = 3000;   // 쓰는 중엔 1초마다, 1분 넘게 아무도 안 쓰면 3초마다 팀원 내용 받아 옴
 const MAX_FILE = 2 * 1024 * 1024;          // 사진 아닌 파일 한 개 최대 2MB
 
 function rpc(fn, args){
@@ -304,7 +424,7 @@ const isDirty = k => { const m = getMeta(k); return (m.ops ? m.ops.length > 0 : 
 /* 목록·묶음·체크 칸은 '한 건씩 바뀐 것(op)'만 보내 서버에서 합침 → 여러 명이 동시에 추가·수정해도 사라지지 않음 */
 const FT = {};
 SECTIONS.forEach(s => s.fields.forEach(f => { FT[s.id+'.'+f.k] = f; }));
-const isOpKey = k => { const f = FT[k]; return !!f && (f.type === 'list' || f.type === 'group' || f.type === 'checks' || f.type === 'sims'); };
+const isOpKey = k => { const f = FT[k]; return !!f && (f.type === 'list' || f.type === 'group' || f.type === 'checks' || f.type === 'sims' || f.type === 'worklog' || f.type === 'refs'); };
 const uid = () => (window.crypto && crypto.randomUUID) ? crypto.randomUUID() : 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
 const isObj = v => v && typeof v === 'object' && !Array.isArray(v);
 function applyOps(v, ops){   // 서버 ws_cell_ops와 똑같이 동작해야 함
@@ -318,6 +438,41 @@ function applyOps(v, ops){   // 서버 ws_cell_ops와 똑같이 동작해야 함
   return v;
 }
 const clone = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v));
+
+/* 같은 칸을 동시에 쓴 두 글 합치기: base(둘 다 보던 글)에서 내가 바꾼 부분과 팀원이 바꾼 부분을 둘 다 살림 */
+function span(a, b){   // a → b 로 바뀐 한 구간: a[s,e) 를 t 로
+  let p = 0; const n = Math.min(a.length, b.length);
+  while(p < n && a[p] === b[p]) p++;
+  let q = 0; while(q < n - p && a[a.length-1-q] === b[b.length-1-q]) q++;
+  return {s:p, e:a.length - q, t:b.slice(p, b.length - q)};
+}
+function merge3(base, mine, theirs){
+  base = base == null ? '' : String(base); mine = mine == null ? '' : String(mine); theirs = theirs == null ? '' : String(theirs);
+  if(mine === base || mine === theirs) return theirs;
+  if(theirs === base) return mine;
+  const A = span(base, mine), B = span(base, theirs);
+  if(A.e <= B.s) return base.slice(0, A.s) + A.t + base.slice(A.e, B.s) + B.t + base.slice(B.e);
+  if(B.e <= A.s) return base.slice(0, B.s) + B.t + base.slice(B.e, A.s) + A.t + base.slice(A.e);
+  const pos = B.s + B.t.length;   // 같은 곳을 함께 고친 경우: 팀원 글 바로 뒤에 내 글을 붙여 둘 다 남김
+  return theirs.slice(0, pos) + A.t + theirs.slice(pos);
+}
+// 목록·묶음 칸 안에서 글을 합칠 수 있는 칸인지 (고르기 칸·코드 파일 번호 등은 제외)
+function mergeable(k, f){ const d = FT[k] && (FT[k].sub || []).find(x => x.k === f); return !!d && d.type !== 'select'; }
+function fieldOf(v, op){
+  if(op.op === 'sub') return isObj(v) ? v[op.f] : undefined;
+  const r = Array.isArray(v) ? v.find(x => x && x._id === op.id) : null; return r ? r[op.f] : undefined;
+}
+// 서버의 새 값(theirs) 위에 내 안 보낸 글 수정을 다시 얹을 때, 같은 칸을 팀원도 고쳤으면 두 글을 합침
+function rebaseOps(m, theirs){
+  const cur = {};
+  m.ops.forEach(op => {
+    if(op.b === undefined) return;
+    const key = op.op + '|' + (op.id || '') + '|' + op.f;
+    const t = key in cur ? cur[key] : String(fieldOf(theirs, op) ?? '');
+    if(t !== op.b){ op.v = merge3(op.b, op.v, t); op.b = t; }
+    cur[key] = op.v;
+  });
+}
 const anyDirty = () => Object.keys(meta).some(isDirty);
 
 /* ============================================================
@@ -358,6 +513,67 @@ function fieldHTML(f, sec){
         <label class="block text-xs font-semibold text-slate-500 mb-1.5" aria-hidden="true">${esc(s.label)}</label>
         ${inputHTML(s, path+'.'+s.k, f.label+' '+s.label)}
       </div>`).join('')}</div>`);
+  }
+  if(f.type === 'refs'){
+    const rows = (getV(path) || []).filter(r => r && r._id);
+    const SUB = k => f.sub.find(x => x.k === k);
+    const inp = (k, row, i, cls) => `<div class="min-w-0 ${cls||''}"><label class="block text-xs font-semibold text-slate-500 mb-1.5" aria-hidden="true">${esc(SUB(k).label)}</label>${inputHTML(SUB(k), path, `${i+1}번 ${SUB(k).label}`, row)}</div>`;
+    const SRC = {'웹·기사':[['au','저자·기관','sm:col-span-1','예) 환경부'],['y','날짜','','예) 2024, 3월 5일'],['t','글 제목','sm:col-span-2',''],['src','사이트·매체 이름','',''],['url','링크','','https://…']],
+                 '논문':[['au','저자 (여러 명은 쉼표로)','sm:col-span-2','예) 홍길동, 김철수 / Kim, H., Lee, S.'],['y','연도','','예) 2021'],['t','논문 제목','sm:col-span-2',''],['src','학술지 이름','',''],['vol','권(호)','','예) 12(3)'],['pg','쪽','','예) 45-67'],['url','DOI 또는 링크','sm:col-span-2','예) 10.1234/abcd 또는 https://…']],
+                 '책':[['au','저자','',''],['y','연도','',''],['t','책 제목','sm:col-span-2',''],['src','출판사','',''],['url','링크 (있으면)','','']]};
+    const card = (row, i) => {
+      const sk = SRC[row.sk] ? row.sk : '웹·기사';   // 알 수 없는 종류면 웹·기사로
+      const srcFields = SRC[sk].map(([k, label, cls, ph]) => {
+        const d = Object.assign({}, SUB(k), {label, ph: ph || SUB(k).ph});
+        return `<div class="min-w-0 ${cls}"><label class="block text-xs font-semibold text-slate-500 mb-1.5" aria-hidden="true">${esc(label)}</label>${inputHTML(d, path, `${i+1}번 출처 ${label}`, row)}</div>`;
+      }).join('');
+      const a = APA.format(row);
+      return `<div class="bg-white rounded-2xl shadow-sm p-5 relative" data-row="${esc(row._id)}" data-sig="${esc(row._id + ':' + sk)}">
+        <div class="absolute top-3 right-3 flex items-center gap-2">
+          <span class="text-xs font-bold text-mint-600 bg-mint-50 px-2 py-0.5 rounded-full">${i+1}</span>
+          <button type="button" data-del="${esc(path)}" data-rid="${esc(row._id)}" aria-label="${i+1}번 용어 지우기" class="text-slate-300 hover:text-rose-500 text-sm px-1">✕</button>
+        </div>
+        <div class="grid sm:grid-cols-2 gap-3 pr-16">
+          ${inp('w', row, i)}${inp('rel', row, i)}${inp('d', row, i, 'sm:col-span-2')}
+        </div>
+        <div class="mt-4 rounded-2xl bg-slate-50 p-4">
+          <div class="flex flex-wrap items-center gap-2 mb-3"><span class="text-xs font-bold text-slate-600">출처</span>
+            ${['웹·기사','논문','책'].map(o => `<button type="button" data-refkind="${esc(row._id)}" data-val="${esc(o)}" aria-pressed="${o===sk}" class="px-3 py-1.5 rounded-2xl text-xs font-semibold shadow-sm active:scale-95 transition-all duration-200 ${o===sk?'bg-slate-800 text-white':'bg-white text-slate-500'}">${o}</button>`).join('')}
+          </div>
+          <div class="grid sm:grid-cols-2 gap-3">${srcFields}</div>
+          <div class="mt-3 text-sm leading-relaxed break-words min-w-0" style="overflow-wrap:anywhere"><span class="text-xs font-bold text-mint-700 mr-1">APA</span><span data-apa="${esc(row._id)}">${a ? a.html : '<span class="text-slate-300">출처 칸을 채우면 여기에 APA 형식으로 정리됨</span>'}</span></div>
+        </div>
+      </div>`;
+    };
+    const body = rows.length === 0
+      ? `<div class="text-center py-8 rounded-2xl bg-slate-50"><div class="text-3xl mb-2">📚</div><p class="text-sm text-slate-400">아직 비어 있어요. 아래 버튼으로 첫 용어를 추가해 보세요.</p></div>`
+      : rows.map(card).join('');
+    return wrap(f, `<div class="space-y-3">${body}
+      <button type="button" data-add="${esc(path)}" class="w-full py-3 rounded-2xl bg-white text-mint-600 text-sm font-semibold shadow-sm active:scale-95 transition-all duration-200">+ ${esc(f.addLabel||'추가')}</button>
+    </div>`);
+  }
+  if(f.type === 'worklog'){
+    const wk = curWeek(), rows = wlRows(wk), ppl = people();
+    const ids = new Set(ppl.map(x => x.rid));
+    const extra = rows.filter(r => !ids.has(r._id)).map(r => ({rid:r._id, who:r.who || '', role:r.role || '', sid:r.sid || '', n:r.n || '', extra:true}));
+    const all = ppl.concat(extra);
+    if(!all.length) return wrap(f, `<div class="text-center py-8 rounded-2xl bg-slate-50"><p class="text-sm text-slate-500">먼저 <b>0. 팀 정보</b>에 팀장과 팀원의 학번·이름을 적으면, 여기에 한 사람씩 칸이 생김.</p>
+      <button type="button" data-go="0" class="mt-3 px-4 py-2 text-sm font-semibold rounded-2xl bg-mint-500 text-white active:scale-95 transition-all duration-200">팀 정보로 →</button></div>`);
+    const done = ppl.filter(x => { const r = rows.find(y => y._id === x.rid); return r && String(r.did||'').trim(); }).length;   // 세는 기준: 팀 정보 명단 (학생·교사 화면 같음)
+    const cards = all.map(x => {
+      const r = rows.find(y => y._id === x.rid) || {_id:x.rid, did:''};
+      return `<div class="bg-white rounded-2xl shadow-sm p-4">
+        <div class="flex flex-wrap items-center gap-2 mb-2">
+          <b class="text-sm">${esc(x.who)}</b>
+          ${x.role ? `<span class="text-xs font-bold px-2 py-0.5 rounded-full ${x.role === '조장' ? 'bg-mint-50 text-mint-700' : 'bg-slate-100 text-slate-500'}">${esc(x.role)}</span>` : ''}
+          ${x.extra ? '<span class="text-xs text-amber-600">팀 정보에 없는 이름</span>' : ''}
+        </div>
+        <textarea rows="2" maxlength="300" data-path="log.work" data-rid="${esc(x.rid)}" data-f="did" data-wl="1" data-wsid="${esc(x.sid)}" data-wn="${esc(x.n)}" data-wrole="${esc(x.role)}" data-wwho="${esc(x.who)}"
+          aria-label="${esc(x.who)} 이번 주 한 일" placeholder="이번 주 실험 시간에 내가 한 일을 한두 줄로" class="fieldbox w-full px-4 py-2.5 rounded-2xl bg-slate-50 text-base placeholder:text-slate-300 transition-all duration-200">${esc(r.did || '')}</textarea>
+      </div>`;
+    }).join('');
+    return wrap(f, `<div class="rounded-2xl bg-mint-50 text-mint-800 text-sm px-4 py-3 mb-3 flex flex-wrap justify-between gap-2"><span><b>${weekLabel(new Date(wk+'T00:00:00Z'))}</b> · 한 사람씩 자기 칸에 씀</span><span data-wlcount><b>${done}/${ppl.length}명</b> 작성</span></div>
+      <div class="space-y-3" data-wlsig="${esc(all.map(x => x.rid).join('|'))}" data-wlweek="${esc(wk)}">${cards}</div>`);
   }
   if(f.type === 'simlink'){
     const n = (getV('sim.items') || []).filter(r => r && r._id).length, si = SECTIONS.findIndex(x => x.id === 'sim');
@@ -455,12 +671,12 @@ function render(scrollTop){
 }
 function setEditable(on){
   document.querySelectorAll('#panels [data-path]').forEach(el => { if(el.tagName==='SELECT') el.disabled = !on; else el.readOnly = !on; });
-  document.querySelectorAll('#panels [data-add],#panels [data-del],#panels [data-check],#panels [data-simedit],#fileZone button').forEach(el => el.disabled = !on);
+  document.querySelectorAll('#panels [data-add],#panels [data-del],#panels [data-check],#panels [data-refkind],#panels [data-simedit],#fileZone button').forEach(el => el.disabled = !on);
 }
 // 다른 팀원이 고친 칸을 화면에 반영. 입력 중인 칸은 건드리지 않고, 구조가 바뀌면 입력이 끝난 뒤 다시 그림
 function refreshFromRemote(keys){
   const sec = SECTIONS[cur];
-  const touchesCur = keys.some(k => k.split('.')[0] === sec.id) || (sec.id === 'verify' && keys.includes('sim.items'));
+  const touchesCur = keys.some(k => k.split('.')[0] === sec.id) || (sec.id === 'verify' && keys.includes('sim.items')) || (sec.id === 'log' && keys.some(k => k.startsWith('team.')));
   updateProgress(); updateTeamLine();
   if(!touchesCur) return;
   const active = document.activeElement;
@@ -469,10 +685,30 @@ function refreshFromRemote(keys){
   // 줄 구성이 같으면 값만 바꿈. 지금 누른 칸도, 내가 아직 안 보낸 글이 없으면 팀원 글로 바꿔 줌(커서 위치 유지)
   let structural = false;
   if(sec.id === 'verify' && keys.includes('sim.items')) structural = true;   // 검증 탭의 '올린 개수' 안내
+  if(sec.id === 'log'){   // 팀원 명단이 바뀌면 칸 구성이 바뀜, 작성 수는 바로 고침
+    const box = document.querySelector('#panels [data-wlsig]');
+    const sig = people().map(x => x.rid).concat(wlRows(curWeek()).map(r => r._id)).filter((v, i, a) => a.indexOf(v) === i).join('|');
+    if(!box || box.dataset.wlsig !== sig) structural = true;
+    const st = wlStatus(), c = document.querySelector('#panels [data-wlcount]');
+    if(c && st.total) c.innerHTML = `<b>${st.total - st.missing.length}/${st.total}명</b> 작성`;
+  }
   keys.forEach(k => {
     if(k.split('.')[0] !== sec.id) return;
     const f = FT[k]; if(!f) return;
     if(f.type === 'checks'){ structural = true; return; }
+    if(f.type === 'refs'){
+      const rows = (getV(k) || []).filter(r => r && r._id);
+      const want = rows.map(r => r._id + ':' + (['웹·기사','논문','책'].includes(r.sk) ? r.sk : '웹·기사')).join('|');
+      const have = [...document.querySelectorAll('#panels [data-row][data-sig]')].map(d => d.dataset.sig).join('|');
+      if(want !== have){
+        structural = true;
+        if(active && active.dataset && active.dataset.rid && active.dataset.path === k && !rows.some(r => r._id === active.dataset.rid)){
+          banner('팀원이 지금 쓰던 줄을 지웠음.', 'warn', 'rowdel'); active.blur(); render(false); structural = false;
+        }
+        return;
+      }
+      rows.forEach(r => apaPreview(r));
+    }
     if(f.type === 'sims'){
       const rows = (getV(k) || []).filter(r => r && r._id);
       const want = rows.map(r => r._id + ':' + (r.fid||'')).join('|');
@@ -501,17 +737,27 @@ function refreshFromRemote(keys){
     }
     document.querySelectorAll('#panels [data-path]').forEach(el => {
       if(el.dataset.path !== k && !el.dataset.path.startsWith(k + '.')) return;
-      if(el === active && isDirty(k)) return;
       const v = String(elValue(el));
       if(el.value === v) return;
-      if(el === active && el.tagName !== 'SELECT'){
-        const a = el.selectionStart, b = el.selectionEnd; el.value = v;
-        try{ el.setSelectionRange(Math.min(a, v.length), Math.min(b, v.length)); }catch(e){}
-      } else el.value = v;
+      if(el === active){
+        if(el.tagName === 'SELECT') return;
+        if(composing){ composeRefresh = true; return; }   // 한글 조합 중에는 글자가 깨지므로 조합이 끝난 뒤 반영
+        const old = el.value, a = el.selectionStart, b = el.selectionEnd, d = span(old, v), shift = v.length - old.length;
+        const mapC = x => x <= d.s ? x : (x >= d.e ? x + shift : d.s + d.t.length);   // 팀원 글이 커서 앞에 들어오면 커서도 그만큼 밀림
+        el.value = v; el._prev = v;
+        try{ el.setSelectionRange(mapC(a), mapC(b)); }catch(e){}
+      } else { el.value = v; el._prev = v; }
     });
   });
   if(structural) pendingRender = true;
 }
+let composing = false, composeRefresh = false;
+document.addEventListener('compositionstart', () => { composing = true; });
+document.addEventListener('compositionend', e => {
+  composing = false;
+  const p = e.target && e.target.dataset && e.target.dataset.path;
+  if(composeRefresh && p){ composeRefresh = false; setTimeout(() => refreshFromRemote([cellKey(p)]), 0); }
+});
 document.addEventListener('focusout', () => {
   setTimeout(() => {
     const a = document.activeElement;
@@ -534,7 +780,7 @@ function saveState(){
 }
 function touch(k){
   if(!S || !S.alive || !S.loaded) return;
-  const m = getMeta(k); m.seq++;
+  const m = getMeta(k); m.seq++; S.lastAct = Date.now();
   clearTimeout(m.timer); m.timer = setTimeout(() => { m.timer = null; saveNow(k); }, DEBOUNCE);
   saveState(); updateProgress(); updateTeamLine();
 }
@@ -545,10 +791,14 @@ function opPush(k, op, delay){
   if(!m.ops){ m.ops = []; m.base = clone(getV(k)); m.inflight = 0; }
   const last = m.ops[m.ops.length - 1];
   if(last && m.ops.length > m.inflight && (op.op === 'rset' || op.op === 'sub') && last.op === op.op && last.id === op.id && last.f === op.f) last.v = op.v;
-  else m.ops.push(op);
+  else {
+    if((op.op === 'rset' || op.op === 'sub') && typeof op.v === 'string' && mergeable(k, op.f)) op.b = String(fieldOf(getV(k), op) ?? '');
+    m.ops.push(op);
+  }
+  S.lastAct = Date.now();
   setV(k, applyOps(getV(k), [op]));
   clearTimeout(m.timer); m.timer = setTimeout(() => { m.timer = null; saveNow(k); }, delay == null ? DEBOUNCE : delay);
-  saveState(); updateProgress(); updateTeamLine();
+  saveState(); updateProgress(); updateTeamLine(); if(k === 'log.work') updateSubLine();
 }
 function saveOps(k, m, T){
   if(!m.ops.length){ saveState(); return; }
@@ -558,7 +808,7 @@ function saveOps(k, m, T){
     m.saving = false; m.inflight = 0;
     if(T !== S) return;
     if(r && r.ok){
-      m.ops.splice(0, batch.length); m.err = ''; m.fails = 0; m.updated = Number(r.updated)||m.updated; T.lastSave = Date.now();
+      m.ops.splice(0, batch.length); m.err = ''; m.fails = 0; m.conflicts = 0; m.updated = Number(r.updated)||m.updated; T.lastSave = Date.now();
       m.base = r.v;
       const before = JSON.stringify(getV(k)), now = applyOps(clone(r.v), m.ops);
       setV(k, now);
@@ -567,6 +817,13 @@ function saveOps(k, m, T){
       saveState(); return;
     }
     m.queued = false;
+    if(r && r.error === 'conflict' && (m.conflicts = (m.conflicts||0) + 1) < 20){   // 그사이 팀원이 같은 칸을 고침 → 합쳐서 다시 보냄
+      m.base = r.v; m.updated = Number(r.updated) || m.updated;
+      rebaseOps(m, r.v);
+      const before = JSON.stringify(getV(k)), now = applyOps(clone(r.v), m.ops);
+      setV(k, now); if(JSON.stringify(now) !== before) refreshFromRemote([k]);
+      saveNow(k); return;
+    }
     if(r && r.error === 'bad_token'){ kicked(); return; }
     if(r && r.error === 'too_large'){ m.err = '내용이 너무 김'; banner('이 칸의 내용이 너무 길어 저장하지 못했음. 나눠서 적을 것.', 'bad'); saveState(); return; }
     retry(k, m, T);
@@ -582,15 +839,24 @@ function saveNow(k){
   const seq = m.seq;
   const val = getV(k);
   m.saving = true; saveState();
-  rpc('ws_cell_put', {p_token:T.token, p_key:k, p_value: val === undefined ? null : val}).then(r => {
+  const sent = val === undefined ? null : val;
+  rpc('ws_cell_put2', {p_token:T.token, p_key:k, p_value: sent, p_base: m.bv === undefined ? null : m.bv, p_check: true}).then(r => {
     m.saving = false;
     if(T !== S) return;
     if(r && r.ok){
-      m.sent = Math.max(m.sent, seq); m.err = ''; m.fails = 0; m.updated = Number(r.updated)||m.updated; T.lastSave = Date.now();
+      m.sent = Math.max(m.sent, seq); m.err = ''; m.fails = 0; m.conflicts = 0; m.updated = Number(r.updated)||m.updated; T.lastSave = Date.now();
+      m.bv = sent;
       if(m.queued || m.seq !== m.sent){ m.queued = false; saveNow(k); return; }
       saveState(); return;
     }
     m.queued = false;
+    if(r && r.error === 'conflict' && (m.conflicts = (m.conflicts||0) + 1) < 20){   // 그사이 팀원이 같은 칸을 고침 → 두 글을 합쳐서 다시 보냄
+      const theirs = r.v, local = getV(k);
+      const merged = (FT[k] && FT[k].type === 'select') ? local : merge3(m.bv, local, theirs);
+      m.bv = theirs; m.updated = Number(r.updated) || m.updated;
+      setV(k, merged); if(merged !== local) refreshFromRemote([k]);
+      saveNow(k); return;
+    }
     if(r && r.error === 'bad_token'){ kicked(); return; }
     if(r && r.error === 'too_large'){ m.err = '내용이 너무 김'; banner('이 칸의 내용이 너무 길어 저장하지 못했음. 나눠서 적을 것.', 'bad'); saveState(); return; }
     retry(k, m, T);
@@ -617,26 +883,36 @@ function poll(){
   const T = S; if(!T || !T.alive) return;
   clearTimeout(T.timer);
   const gen = T.pollGen = (T.pollGen || 0) + 1;   // 마지막으로 시작한 확인만 다음 확인을 예약함 (겹쳐 도는 것 막기)
-  if(document.visibilityState === 'hidden' && T.loaded){ T.timer = setTimeout(poll, POLL_MS); return; }
+  if(document.visibilityState === 'hidden' && T.loaded){ T.timer = setTimeout(poll, POLL_IDLE); return; }
   const args = {p_token:T.token};
   if(T.since) args.p_since = new Date(T.since).toISOString();
   rpc('ws_pull', args).then(r => {
     if(T !== S || !T.alive || gen !== T.pollGen) return;
     if(!r || !r.ok){ if(r && r.error === 'bad_token'){ kicked(); return; } throw new Error('x'); }
     T.netFail = 0; T.since = Number(r.now) - SINCE_MARGIN;
+    const busy = () => Date.now() - (T.lastAct || 0) < 60000;
     if(r.team){ T.team = r.team.name; T.cls = r.team.class; }
     const changed = [];
     (r.cells || []).forEach(c => {
       if(!c || typeof c.k !== 'string' || !/^[a-z_]+\.[a-z_]+$/.test(c.k)) return;
       const m = getMeta(c.k);
       const op = isOpKey(c.k);
-      if(op ? m.saving : isDirty(c.k)) return;      // 목록류는 저장 중만 건너뜀(응답이 최신 값을 줌)
+      if(m.saving) return;                          // 저장 중이면 응답이 최신 값을 줌
       if(m.updated && Number(c.updated) < m.updated) return;
       const [a,b] = c.k.split('.');
-      const oldJ = JSON.stringify(state[a] ? state[a][b] : undefined);
+      const local = state[a] ? state[a][b] : undefined;
+      const oldJ = JSON.stringify(local);
       m.updated = Number(c.updated) || m.updated;
       let nv = c.v;
-      if(op){ m.base = clone(c.v); if(m.ops && m.ops.length) nv = applyOps(clone(c.v), m.ops); }   // 팀원 것 위에 내 안 보낸 것을 다시 얹음
+      if(op){
+        m.base = clone(c.v);
+        if(m.ops && m.ops.length){ rebaseOps(m, c.v); nv = applyOps(clone(c.v), m.ops); }   // 팀원 것 위에 내 안 보낸 것을 다시 얹음
+      } else {
+        // 글 칸: 내가 쓰는 중이면 팀원 글과 합쳐 바로 보여 줌(곧 합친 글로 저장됨)
+        if(isDirty(c.k) && JSON.stringify(c.v) !== JSON.stringify(m.bv)) nv = (FT[c.k] && FT[c.k].type === 'select') ? local : merge3(m.bv, local, c.v);
+        else if(isDirty(c.k)) nv = local;
+        m.bv = clone(c.v);
+      }
       if(oldJ === JSON.stringify(nv)) return;
       if(!state[a]) state[a] = {};
       if(nv === null || nv === undefined) delete state[a][b]; else state[a][b] = nv;
@@ -646,6 +922,10 @@ function poll(){
     const filesChanged = fj !== JSON.stringify(files);
     files = r.files || [];
     subs = r.subs || [];
+    if(changed.length && T.loaded) T.lastAct = Date.now();
+    const wkNow = curWeek();
+    if(T.loaded && T.week && T.week !== wkNow && SECTIONS[cur].id === 'log'){ const a = document.activeElement; if(!(a && a.dataset && a.dataset.path)) render(false); else pendingRender = true; }
+    T.week = wkNow;
     if(!T.loaded){
       T.loaded = true;
       render(true); updateProgress(); updateTeamLine(); updateSubLine(); saveState();
@@ -655,7 +935,7 @@ function poll(){
       updateSubLine();
     }
     hideBanner('net');
-    T.timer = setTimeout(poll, POLL_MS);
+    T.timer = setTimeout(poll, busy() ? POLL_MS : POLL_IDLE);
   }).catch(() => {
     if(T !== S || !T.alive || gen !== T.pollGen) return;
     T.netFail = (T.netFail||0) + 1;
@@ -844,11 +1124,32 @@ document.addEventListener('click', async e => {
    9. 입력 이벤트
    ============================================================ */
 const editable = () => S && S.alive && S.loaded;
+function apaPreview(row){
+  const el = document.querySelector(`#panels [data-apa="${CSS.escape(row._id)}"]`); if(!el) return;
+  const a = APA.format(row); el.innerHTML = a ? a.html : '<span class="text-slate-300">출처 칸을 채우면 여기에 APA 형식으로 정리됨</span>';
+}
 function edited(el){
   const p = el.dataset.path, k = cellKey(p);
-  if(el.dataset.rid) opPush(k, {op:'rset', id:el.dataset.rid, f:el.dataset.f, v:el.value});
-  else if(FT[k] && FT[k].type === 'group') opPush(k, {op:'sub', f:p.split('.')[2], v:el.value});
-  else { setV(p, el.value); touch(k); }
+  let v = el.value;
+  if(el.tagName !== 'SELECT'){
+    // 화면 글자와 저장된 값이 어긋났을 수 있음(한글 조합 중 팀원 글이 들어온 경우).
+    // 그래서 '방금 내가 바꾼 부분'만 저장된 값에 얹음 → 팀원 글이 지워지지 않음
+    const prev = el._prev !== undefined ? el._prev : String(elValue(el));
+    const stored = String(elValue(el));
+    v = merge3(prev, el.value, stored);
+    el._prev = el.value;
+  }
+  if(el.dataset.wl && !el.dataset.rid.startsWith('w' + curWeek() + '-')){   // 화면을 켜 둔 채 주가 바뀜 → 지난주 기록을 건드리지 않고 새 주 칸으로 다시 그림
+    banner('새 주가 시작되어 이번 주 칸을 새로 열었음. 이 칸에 다시 적을 것.', 'warn', 'newweek');
+    el.blur(); render(false); updateSubLine(); return;
+  }
+  if(el.dataset.wl && !(getV(k) || []).some(r => r && r._id === el.dataset.rid))   // 그 사람의 이번 주 줄이 아직 없으면 먼저 만듦
+    opPush(k, {op:'add', row:{_id:el.dataset.rid, week:curWeek(), sid:el.dataset.wsid, n:el.dataset.wn, role:el.dataset.wrole, who:el.dataset.wwho, did:''}}, 0);
+  if(el.dataset.rid) opPush(k, {op:'rset', id:el.dataset.rid, f:el.dataset.f, v});
+  else if(FT[k] && FT[k].type === 'group') opPush(k, {op:'sub', f:p.split('.')[2], v});
+  else { setV(p, v); touch(k); }
+  if(el.tagName !== 'SELECT' && v !== el.value){ if(composing) composeRefresh = true; else refreshFromRemote([k]); }
+  if(FT[k] && FT[k].type === 'refs' && el.dataset.rid){ const r = (getV(k) || []).find(x => x && x._id === el.dataset.rid); if(r) apaPreview(r); }
 }
 document.addEventListener('input', e => {
   const p = e.target.dataset && e.target.dataset.path;
@@ -878,6 +1179,8 @@ document.addEventListener('click', e => {
     if(rowFilled(list[i]) && !confirm(`${i+1}번 항목을 지울까요?`)) return;
     opPush(k, {op:'del', id}, 300); render(false); return;
   }
+  const rk = e.target.closest('[data-refkind]');
+  if(rk){ const p = rk.closest('[data-row]'); const k = 'know.items'; opPush(k, {op:'rset', id:rk.dataset.refkind, f:'sk', v:rk.dataset.val}, 300); render(false); return; }
   const chk = e.target.closest('[data-check]');
   if(chk){
     const path = chk.dataset.check, val = chk.dataset.val;
@@ -919,6 +1222,22 @@ function updateTeamLine(){
   const p = getV('team.problem');
   document.getElementById('teamLine').textContent = S ? `${S.cls}반 · ${S.team}${p?' · '+String(p).slice(0,40):''}` : '—';
 }
+/* 이번 주 각자 한 일 */
+const curWeek = () => weekStart(new Date()).toISOString().slice(0,10);
+function people(){   // 0. 팀 정보의 팀장·팀원 → 한 사람씩. 줄 번호는 '주 + 팀원 줄 번호(팀장은 lead)'라서 학번·이름을 고쳐도 쓴 글이 따라감
+  const wk = curWeek(), out = [], seen = new Set();
+  const add = (key, sid, n, role) => {
+    sid = String(sid||'').trim(); n = String(n||'').trim(); if(!sid && !n) return;
+    const rid = 'w' + wk + '-' + key; if(seen.has(rid)) return; seen.add(rid);
+    out.push({rid, sid, n, role, who: [sid, n].filter(Boolean).join(' ')});
+  };
+  const l = getV('team.leader'); if(isObj(l)) add('lead', l.id, l.n, '조장');
+  (getV('team.members') || []).forEach(m => { if(m && m._id) add('m' + m._id, m.id, m.n, m.r ? String(m.r).slice(0, 20) : '조원'); });
+  return out;
+}
+const wlRows = wk => (getV('log.work') || []).filter(r => r && r._id && r.week === wk);
+function wlStatus(){ const ppl = people(), rows = wlRows(curWeek()); const missing = ppl.filter(x => { const r = rows.find(y => y._id === x.rid); return !(r && String(r.did||'').trim()); }); return {total: ppl.length, missing}; }
+
 function weekStart(d){ // 한국 시각 기준 이번 주 월요일
   const k = new Date(d.getTime() + 9*3600e3); const day = (k.getUTCDay()+6)%7;
   const m = new Date(Date.UTC(k.getUTCFullYear(), k.getUTCMonth(), k.getUTCDate() - day));
@@ -934,6 +1253,8 @@ function updateSubLine(){
     el.textContent = `이번 주 제출함 · ${t.toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'})} · ${s.submitter}`;
     el.className = 'text-xs mt-1 font-semibold text-mint-600';
   } else { el.textContent = '이번 주 제출 전'; el.className = 'text-xs mt-1 font-semibold text-amber-600'; }
+  const st = wlStatus();
+  if(st.total) el.textContent += ` · 이번 주 한 일 ${st.total - st.missing.length}/${st.total}명`;
 }
 let bannerTag = null;
 function banner(text, kind, tag){
@@ -956,6 +1277,8 @@ function openSubmit(){
   document.getElementById('mdWho').value = lsGet('ws_who') || '';
   document.getElementById('mdNote').value = '';
   document.getElementById('mdMsg').textContent = '';
+  const ok = document.getElementById('mdOk'); delete ok.dataset.force; ok.textContent = '제출하기';
+  renderWorkSummary();
   const ul = document.getElementById('mdHist'); ul.innerHTML = '';
   if(!subs.length){ const li = document.createElement('li'); li.textContent = '아직 제출 기록이 없음.'; li.className = 'text-slate-400'; ul.appendChild(li); }
   subs.slice(0, 12).forEach(s => {
@@ -967,12 +1290,24 @@ function openSubmit(){
   document.getElementById('modal').hidden = false;
   document.getElementById('mdWho').focus();
 }
+function renderWorkSummary(){
+  const ul = document.getElementById('mdWork'), ppl = people(), rows = wlRows(curWeek());
+  if(!ppl.length){ ul.innerHTML = '<li class="text-amber-700">0. 팀 정보에 팀장·팀원을 먼저 적을 것.</li>'; return; }
+  ul.innerHTML = ppl.map(x => { const r = rows.find(y => y._id === x.rid), d = r && String(r.did||'').trim();
+    return `<li>${d ? '✅' : '⬜'} <b>${esc(x.who)}</b> <span class="${d ? 'text-slate-600' : 'text-rose-500'}">${d ? esc(d.length > 60 ? d.slice(0, 60) + '…' : d) : '아직 안 씀'}</span></li>`; }).join('');
+}
 async function doSubmit(){
   const who = document.getElementById('mdWho').value.trim(), note = document.getElementById('mdNote').value.trim();
   const msg = document.getElementById('mdMsg'), ok = document.getElementById('mdOk');
   if(!who){ msg.textContent = '제출자 학번과 이름을 적어 주세요.'; msg.className = 'text-sm text-rose-600'; return; }
   if(!note){ msg.textContent = '이번 주 한 것을 적어 주세요.'; msg.className = 'text-sm text-rose-600'; return; }
   if(!S || !S.alive){ msg.textContent = ERR.bad_token; msg.className = 'text-sm text-rose-600'; return; }
+  const st = wlStatus();
+  if(st.missing.length && !ok.dataset.force){   // 안 쓴 사람이 있으면 한 번 알려 주고, 한 번 더 누르면 제출
+    renderWorkSummary();
+    msg.textContent = `아직 '이번 주 한 일'을 안 쓴 사람: ${st.missing.map(x => x.n || x.sid).join(', ')}. 쓰고 제출하거나, 결석 등으로 그대로 내려면 한 번 더 누를 것.`;
+    msg.className = 'text-sm text-amber-700'; ok.dataset.force = '1'; ok.textContent = '그래도 제출하기'; return;
+  }
   ok.disabled = true; msg.className = 'text-sm text-slate-500'; msg.textContent = '쓴 내용을 저장하는 중…';
   const saved = await whenSaved(15000);
   if(!saved){ ok.disabled = false; msg.textContent = '아직 저장되지 않은 글이 있어 제출하지 못했음. 연결을 확인하고 다시 누를 것.'; msg.className = 'text-sm text-rose-600'; return; }
@@ -1014,7 +1349,8 @@ function doPrint(){
       const v = getV(sec.id+'.'+f.k);
       if(!filled(v)) return;
       h += `<div style="margin:10px 0"><div style="font-size:13px;font-weight:700;color:#334155">${esc(f.label)}</div>`;
-      if(Array.isArray(v) && f.type==='checks') h += `<div style="font-size:14px">${v.map(esc).join(' · ')}</div>`;
+      if(f.type==='refs' && Array.isArray(v)) h += `<ol style="font-size:14px;padding-left:18px">${v.filter(rowFilled).map(r => { const a = APA.format(r); return `<li style="margin:6px 0"><b>${esc(r.w||'')}</b>${r.d?' — '+esc(r.d):''}${r.rel?`<br><span style="color:#64748b">필요한 곳: ${esc(r.rel)}</span>`:''}${a?`<br><span style="color:#334155">출처: ${a.html}</span>`:''}</li>`; }).join('')}</ol>`;
+      else if(Array.isArray(v) && f.type==='checks') h += `<div style="font-size:14px">${v.map(esc).join(' · ')}</div>`;
       else if(Array.isArray(v)) h += `<ol style="font-size:14px;padding-left:18px">${v.filter(rowFilled).map(row=>`<li style="margin:4px 0">${f.sub.map(s=>row&&row[s.k]?`<b>${esc(s.label)}:</b> ${esc(row[s.k])}`:'').filter(Boolean).join(' / ')}</li>`).join('')}</ol>`;
       else if(typeof v === 'object') h += `<div style="font-size:14px">${f.sub.map(s=>v[s.k]?`<b>${esc(s.label)}:</b> ${esc(v[s.k])}`:'').filter(Boolean).join('<br>')}</div>`;
       else h += `<div style="font-size:14px;white-space:pre-wrap;line-height:1.7">${esc(v)}</div>`;

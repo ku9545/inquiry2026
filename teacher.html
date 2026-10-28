@@ -84,7 +84,7 @@ tailwind.config = { theme: { extend: {
       <div class="overflow-x-auto">
         <table class="w-full text-sm">
           <thead class="text-left text-slate-500 bg-slate-50">
-            <tr><th class="px-4 py-2.5 font-semibold">반</th><th class="px-4 py-2.5 font-semibold">팀</th><th class="px-4 py-2.5 font-semibold">팀장</th><th class="px-4 py-2.5 font-semibold">인원</th><th class="px-4 py-2.5 font-semibold w-40">진행률</th><th class="px-4 py-2.5 font-semibold">마지막 수정</th><th class="px-4 py-2.5 font-semibold" id="thWeek">이번 주 제출</th></tr>
+            <tr><th class="px-4 py-2.5 font-semibold">반</th><th class="px-4 py-2.5 font-semibold">팀</th><th class="px-4 py-2.5 font-semibold">팀장</th><th class="px-4 py-2.5 font-semibold">인원</th><th class="px-4 py-2.5 font-semibold w-40">진행률</th><th class="px-4 py-2.5 font-semibold">마지막 수정</th><th class="px-4 py-2.5 font-semibold" id="thWork">이번 주 한 일</th><th class="px-4 py-2.5 font-semibold" id="thWeek">이번 주 제출</th></tr>
           </thead>
           <tbody id="rows"></tbody>
         </table>
@@ -128,6 +128,15 @@ tailwind.config = { theme: { extend: {
           <button id="dPwBtn" type="button" class="px-4 py-2.5 text-sm font-semibold rounded-2xl bg-rose-500 text-white active:scale-95 transition-all duration-200">바꾸기</button>
         </div>
         <p id="dPwMsg" class="text-sm mt-2" role="status"></p>
+      </section>
+      <section class="bg-white rounded-2xl shadow-sm p-5 no-print border border-rose-100">
+        <h3 class="font-bold text-rose-700">팀 지우기</h3>
+        <p class="text-xs text-slate-500 mt-1 leading-relaxed">잘못 만들었거나 겹치는 팀을 지움. 워크시트·첨부·제출 기록이 모두 사라지고 <b>되돌릴 수 없음</b>. 지우려면 아래 칸에 팀 이름 <b id="dDelName" class="text-slate-700"></b> 을(를) 그대로 적음.</p>
+        <div class="mt-3 flex gap-2">
+          <input id="dDel" type="text" maxlength="40" autocomplete="off" aria-label="지울 팀 이름 확인" class="fieldbox flex-1 px-4 py-2.5 rounded-2xl bg-slate-50 text-base" placeholder="팀 이름 그대로">
+          <button id="dDelBtn" type="button" disabled class="px-4 py-2.5 text-sm font-semibold rounded-2xl bg-rose-600 text-white disabled:opacity-40 active:scale-95 transition-all duration-200">팀 지우기</button>
+        </div>
+        <p id="dDelMsg" class="text-sm mt-2" role="status"></p>
       </section>
     </div>
   </aside>
@@ -457,6 +466,97 @@ const SimRun = (() => {
 })();
 /*SIMRUN-END*/
 
+/*SHARED-BEGIN*/
+/* 출처를 APA 형식으로 정리 (학생용·교사용 공통) */
+const APA = (() => {
+  const esc2 = x => String(x == null ? '' : x).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  const tr = x => String(x == null ? '' : x).replace(/\s+/g, ' ').trim();
+  const hasLatin = x => /[A-Za-z]/.test(x) && !/[가-힣]/.test(x);
+  // 영문 이름 → 'Kim, H. J.' / 한글 이름은 그대로
+  const PARTICLE = /^(van|von|de|der|den|da|di|du|del|della|le|la|st\.?)$/i;
+  const GROUP = /\b(organi[sz]ation|institute|ministry|university|college|school|association|department|agency|council|society|cent(er|re)|committee|foundation|office|bureau|corporation|company|inc|ltd|group|board|service|commission|federation|academy|museum|library|government|national|international|korea|united|nations)\b/i;
+  const isInit = x => /^([A-Z]\.?(-[A-Z]\.?)?\s*)+$/.test(x) && x.replace(/[\s.\-]/g, '').length <= 3;
+  const isWord = x => /^[A-Za-z][A-Za-z'’\-]*$/.test(x);
+  // 영문 이름 → 'Kim, H. J.' (단체 이름·한글 이름은 적은 그대로)
+  function person(n){
+    n = tr(n); if(!n) return '';
+    if(!hasLatin(n)) return n.replace(/\.$/, '');
+    if(GROUP.test(n) || n.split(' ').length > 4) return n.replace(/\.$/, '');
+    if(/,/.test(n)){ const [last, rest] = n.split(/,(.+)/); return tr(last) + ', ' + initials(rest); }
+    const parts = n.replace(/\.$/, '').split(' '); if(parts.length === 1) return n;
+    if(parts.length === 2 && isInit(parts[1]) && !isInit(parts[0])) return parts[0] + ', ' + initials(parts[1]);   // 'Kim H'
+    let i = parts.length - 1; while(i > 1 && PARTICLE.test(parts[i-1])) i--;            // 'Ludwig van Beethoven' → 'van Beethoven'
+    return parts.slice(i).join(' ') + ', ' + initials(parts.slice(0, i).join(' '));
+  }
+  function initials(x){   // 'Jean-Paul' → 'J.-P.', 'H.J.' → 'H. J.'
+    return tr(x).replace(/\./g, ' ').split(/\s+/).filter(Boolean).map(w => w.split('-').map(p => p[0].toUpperCase() + '.').join('-')).join(' ');
+  }
+  function authors(raw){
+    let toks = tr(raw).split(/\s*(?:;|·|\/|\n|,|\band\b|&)\s*/i).map(tr).filter(Boolean);
+    // 'Kim, H.' · 'Kim, Hyunjin' 처럼 '성, 이름(이니셜)'으로 쓴 것은 한 사람으로 다시 붙임
+    const out = [];
+    for(let i = 0; i < toks.length; i++){
+      const x = toks[i], y = toks[i+1];
+      if(out.length && GROUP.test(out[out.length-1]) && hasLatin(x) && x.split(' ').length <= 2 && GROUP.test(x)){ out[out.length-1] += ', ' + x; continue; }   // 'National Institute of …, Korea'
+      if(y !== undefined && hasLatin(x) && isWord(x) && !GROUP.test(x) && hasLatin(y) && (isInit(y) || isWord(y)) && !GROUP.test(y)){ out.push(x + ', ' + y); i++; }
+      else out.push(x);
+    }
+    let list = out.map(person).filter(Boolean);
+    if(!list.length) return '';
+    const allLatin = list.every(hasLatin);
+    if(list.length === 1) return list[0];
+    if(list.length > 20) return list.slice(0, 19).join(', ') + ', … ' + list[list.length-1];   // APA 7: 21명 이상은 19명 … 마지막 사람
+    if(!allLatin) return list.join(', ');
+    if(list.length === 2) return `${list[0]}, & ${list[1]}`;
+    return list.slice(0, -1).join(', ') + ', & ' + list[list.length-1];
+  }
+  const end = x => /[.?!]$/.test(x) ? x : x + '.';
+  function link(u){
+    u = tr(u); if(!u) return '';
+    if(/^10\.\d{4,}\//.test(u)) return 'https://doi.org/' + u;
+    if(/^doi:\s*/i.test(u)) return 'https://doi.org/' + u.replace(/^doi:\s*/i, '');
+    if(/^www\./i.test(u)) return 'https://' + u;
+    return u;
+  }
+  const safeUrl = u => /^https?:\/\/[^\s<>"']+$/i.test(u) ? u : '';
+  function date(y){ y = tr(y); return y ? y.replace(/^\(|\)$/g, '') : 'n.d.'; }
+  function volIss(v){ v = tr(v).replace(/권|호/g, ''); const m = v.match(/^(\d+)\s*[\(\s,]\s*(\d+)\)?$/); return m ? {vol:m[1], iss:m[2]} : {vol:v, iss:''}; }
+  // r: {sk, au, y, t, src, vol, pg, url}  →  {html, text, url}
+  function format(r){
+    const sk = r.sk || '웹·기사', au = authors(r.au), y = date(r.y), title = tr(r.t), src = tr(r.src), url = link(r.url), su = safeUrl(url);
+    const parts = [], txt = [];
+    const push = (h, x) => { parts.push(h); txt.push(x); };
+    if(sk === '논문'){
+      const head = au || title; if(!head) return null;
+      push(esc2(au || end(title)) + ` (${esc2(y)}).`, (au || end(title)) + ` (${y}).`);
+      if(au && title) push(esc2(end(title)), end(title));
+      if(src){
+        const vi = volIss(r.vol), pg = tr(r.pg).replace(/\s*[-~]\s*/, '–').replace(/^pp?\.\s*/i, '');
+        let h = `<i>${esc2(src)}</i>`, x = src;
+        if(vi.vol){ h += `, <i>${esc2(vi.vol)}</i>`; x += `, ${vi.vol}`; }
+        if(vi.iss){ h += `(${esc2(vi.iss)})`; x += `(${vi.iss})`; }
+        if(pg){ h += `, ${esc2(pg)}`; x += `, ${pg}`; }
+        push(h + '.', x + '.');
+      }
+    } else if(sk === '책'){
+      const head = au || title; if(!head) return null;
+      push(esc2(au || end(title)) + ` (${esc2(y)}).`, (au || end(title)) + ` (${y}).`);
+      if(au && title) push(`<i>${esc2(end(title))}</i>`, end(title));
+      if(src) push(esc2(end(src)), end(src));
+    } else {
+      const head = au || src || title; if(!head && !url) return null;
+      const who = au || src;
+      if(who){ push(esc2(who) + ` (${esc2(y)}).`, who + ` (${y}).`); if(title) push(`<i>${esc2(end(title))}</i>`, end(title)); }
+      else if(title){ push(`<i>${esc2(end(title))}</i> (${esc2(y)}).`, end(title) + ` (${y}).`); }
+      if(src && au) push(esc2(end(src)), end(src));
+    }
+    if(url){ push(su ? `<a href="${esc2(su)}" target="_blank" rel="noopener noreferrer" class="text-mint-700 underline break-all">${esc2(url)}</a>` : esc2(url), url); }
+    return {html: parts.join(' '), text: txt.join(' '), url: su};
+  }
+  return {format, authors};
+})();
+/*SHARED-END*/
+
 /* 문항 정의 — 학생용(index.html)과 같아야 함 */
 const SECTIONS = [
 { id:'team', num:'0', tab:'팀', title:'팀 정보', desc:'우리 팀이 누구이고, 무엇을 해결하려는지 한 줄로 정리합니다.',
@@ -468,6 +568,13 @@ const SECTIONS = [
       sub:[{k:'id', label:'학번', type:'text', ph:'예) 10312'},{k:'n', label:'이름', type:'text'},{k:'r', label:'역할', type:'text', ph:'예) 실험 설계 · 자료 조사'}]},
     {k:'problem', label:'어떠한 문제를 해결하고자 하는가?', type:'textarea', rows:3,
       hint:'한두 문장으로. 뒤에서 더 다듬게 되니 지금은 거칠어도 괜찮습니다.'}
+  ]},
+
+{ id:'log', num:'✎', tab:'이번 주 한 일', title:'이번 주 각자 한 일', desc:'실험 수업 시간에 조장과 조원이 각자 무엇을 했는지 한두 줄로 적습니다. 매주 \'이번 주 제출\' 때 함께 제출되고, 선생님이 실시간으로 봅니다. 이름은 0. 팀 정보의 팀장·팀원에서 자동으로 나옵니다.',
+  fields:[
+    {k:'work', label:'이번 주 각자 한 일', type:'worklog', noProgress:true,
+      hint:'예) 선행 연구 논문 2편을 찾아 요약함 · 실험 재료 가격을 조사해 표로 정리함 · 시뮬레이션 코드의 조건을 바꿔 3번 돌려 봄',
+      sub:[{k:'who', label:'이름'},{k:'role', label:'역할'},{k:'did', label:'한 일', type:'textarea'}]}
   ]},
 
 { id:'why', num:'1', tab:'왜?', title:'왜 해야 하지 — 설득하기', desc:'이 문제를 왜 지금 풀어야 하는지, 읽는 사람이 공감하도록 설득합니다.',
@@ -499,6 +606,23 @@ const SECTIONS = [
     {k:'stmt', label:'우리가 정의한 문제 (한 문장)', type:'textarea', rows:2,
       hint:'“○○한 상황의 △△가, □□ 때문에 ◇◇하지 못한다” 형태로 써 보면 잘 잡힙니다.'},
     {k:'seed', label:'그래서 떠오른 우리 아이디어의 방향', type:'textarea', rows:3}
+  ]},
+
+{ id:'know', num:'3-1', tab:'알아야 할 지식', title:'알아야 할 지식 (선행 연구)', desc:'우리 문제를 이해하고, 우리 아이디어를 검증하는 데 꼭 알아야 하는 지식을 모읍니다. 관련 용어를 쓰고 간단히 설명한 뒤, 어디서 알게 되었는지 출처를 남깁니다. 출처 칸을 채우면 APA 형식으로 자동 정리됩니다.',
+  fields:[
+    {k:'items', label:'용어와 설명', type:'refs', addLabel:'용어 추가',
+      hint:'예) 용어: 계면활성제 · 설명: 물과 기름 양쪽에 붙는 분자라 기름때를 물에 씻겨 나가게 한다 · 어디에 필요한가: 세척 효과를 비교하는 실험 설계',
+      sub:[{k:'w', label:'용어', type:'text', ph:'예) 계면활성제'},
+           {k:'d', label:'간단한 설명', type:'textarea', rows:2, ph:'내 말로 한두 문장'},
+           {k:'rel', label:'우리 문제·아이디어의 어디에 필요한가', type:'text', ph:'예) 세척 실험의 변인 정하기'},
+           {k:'sk', label:'출처 종류', type:'select', opts:['웹·기사','논문','책']},
+           {k:'au', label:'저자', type:'text'},
+           {k:'y', label:'연도', type:'text'},
+           {k:'t', label:'제목', type:'text'},
+           {k:'src', label:'학술지·사이트·출판사', type:'text'},
+           {k:'vol', label:'권(호)', type:'text'},
+           {k:'pg', label:'쪽', type:'text'},
+           {k:'url', label:'링크·DOI', type:'text'}]}
   ]},
 
 { id:'idea', num:'4', tab:'아이디어', title:'아이디어 내기', desc:'비난도 평가도 금지. 일단 많이 모으고, 그다음 묶습니다.',
@@ -600,6 +724,23 @@ function progress(cells){
   SECTIONS.forEach(sec => sec.fields.forEach(f => { if(!counts(f, sec, cells)) return; total++; if(filled(cells[sec.id+'.'+f.k])) done++; }));
   return total ? Math.round(done/total*100) : 0;
 }
+// 학생용 people()과 같은 규칙: 팀장·팀원 → 그 주의 줄 번호
+function tPeople(c, wk){
+  const out = [], seen = new Set();
+  const add = (key, sid, n, role) => { sid = String(sid||'').trim(); n = String(n||'').trim(); if(!sid && !n) return; const rid = 'w' + wk + '-' + key; if(seen.has(rid)) return; seen.add(rid); out.push({rid, sid, n, role, who:[sid, n].filter(Boolean).join(' ')}); };
+  const l = c['team.leader']; if(l && typeof l === 'object' && !Array.isArray(l)) add('lead', l.id, l.n, '조장');
+  (Array.isArray(c['team.members']) ? c['team.members'] : []).forEach(m => { if(m && m._id) add('m' + m._id, m.id, m.n, m.r ? String(m.r).slice(0, 20) : '조원'); });
+  return out;
+}
+const tWork = (c, wk) => (Array.isArray(c['log.work']) ? c['log.work'] : []).filter(r => r && r._id && r.week === wk);
+function workStat(c, wk){
+  const ppl = tPeople(c, wk), rows = tWork(c, wk), ids = new Set(ppl.map(x => x.rid));
+  const extra = rows.filter(r => !ids.has(r._id) && String(r.did||'').trim()).map(r => ({rid:r._id, who:r.who || r.n || '', role:r.role || ''}));
+  const all = ppl.concat(extra);
+  const did = x => { const r = rows.find(y => y._id === x.rid); return r ? String(r.did||'').trim() : ''; };
+  // 세는 기준: 팀 정보 명단 (학생 화면과 같음). 명단에 없는 이름의 글은 보여 주기만 함
+  return {all, did, done: ppl.filter(did).length, total: ppl.length};
+}
 function leaderOf(c){ const l = c['team.leader']; return l && typeof l === 'object' ? [l.id, l.n].filter(Boolean).join(' ') : ''; }
 function headcount(c){ const m = Array.isArray(c['team.members']) ? c['team.members'].filter(filled).length : 0; return m + (leaderOf(c) ? 1 : 0); }
 function fmtTime(ms){ if(!ms) return '—'; return new Date(Number(ms)).toLocaleString('ko-KR',{month:'numeric',day:'numeric',hour:'2-digit',minute:'2-digit'}); }
@@ -659,9 +800,9 @@ function renderAll(){
     card('평균 진행률', avg + '%', `최근 7일 작성 ${active}팀`);
 
   const rows = $('rows');
-  if(!ts.length){ rows.innerHTML = `<tr><td colspan="7" class="px-4 py-8 text-center text-slate-400">아직 만들어진 팀이 없음.</td></tr>`; }
+  if(!ts.length){ rows.innerHTML = `<tr><td colspan="8" class="px-4 py-8 text-center text-slate-400">아직 만들어진 팀이 없음.</td></tr>`; }
   else rows.innerHTML = ts.map(t => {
-    const p = progress(t.cells), s = lastSubOfWeek(t, w);
+    const p = progress(t.cells), s = lastSubOfWeek(t, w), ws = workStat(t.cells, w);
     return `<tr class="border-t border-slate-100 hover:bg-mint-50/50 cursor-pointer" data-team="${t.id}" tabindex="0">
       <td class="px-4 py-3 whitespace-nowrap">${t.class}반</td>
       <td class="px-4 py-3 font-semibold">${esc(t.name)}</td>
@@ -669,6 +810,7 @@ function renderAll(){
       <td class="px-4 py-3">${headcount(t.cells) || '—'}</td>
       <td class="px-4 py-3"><div class="flex items-center gap-2"><div class="flex-1 h-2 bg-slate-200 rounded-full overflow-hidden"><div class="h-full bg-mint-500" style="width:${p}%"></div></div><span class="text-xs font-semibold text-mint-600 w-9 text-right">${p}%</span></div></td>
       <td class="px-4 py-3 whitespace-nowrap text-slate-500">${ago(t.last)}</td>
+      <td class="px-4 py-3 whitespace-nowrap">${ws.total ? `<span class="font-semibold ${ws.done === ws.total ? 'text-mint-600' : ws.done ? 'text-amber-600' : 'text-rose-500'}">${ws.done}/${ws.total}명</span>` : '<span class="text-slate-300">명단 없음</span>'}</td>
       <td class="px-4 py-3 whitespace-nowrap">${s ? `<span class="text-mint-600 font-semibold">제출함</span> <span class="text-xs text-slate-400">${fmtTime(s.at)} · ${esc(s.submitter)}</span>` : '<span class="text-amber-600 font-semibold">안 함</span>'}</td>
     </tr>`;
   }).join('');
@@ -689,12 +831,26 @@ $('fWeek').addEventListener('change', renderAll);
 
 /* ---------- 상세 ---------- */
 const filledRow = r => filled([r]);
+// 주별 '각자 한 일': 고른 주(이번 주)는 명단 전체와 안 쓴 사람까지, 그 밖의 주는 쓴 것만
+function workHTML(cells){
+  const wkSel = (DATA && $('fWeek').value) || (DATA && DATA.week);
+  const weeks = [...new Set((Array.isArray(cells['log.work']) ? cells['log.work'] : []).filter(r => r && r.week).map(r => r.week).concat(wkSel ? [wkSel] : []))].sort().reverse();
+  return weeks.map(wk => {
+    const st = workStat(cells, wk);
+    const list = (wk === wkSel ? st.all : st.all.filter(st.did));
+    if(!list.length) return wk === wkSel ? `<p class="text-sm text-slate-400">${weekLabel(wk)} · 팀 명단이 아직 없음</p>` : '';
+    return `<div class="mb-3"><p class="text-xs font-bold text-slate-500 mb-1">${weekLabel(wk)}${wk === DATA.week ? ' (이번 주)' : ''} · ${st.done}/${st.total}명</p>
+      <ul class="space-y-1 text-sm">${list.map(x => { const d = st.did(x); return `<li>${d ? '✅' : '⬜'} <b>${esc(x.who)}</b>${x.role ? ` <span class="text-xs text-slate-400">${esc(x.role)}</span>` : ''} — <span class="${d ? 'whitespace-pre-wrap' : 'text-rose-500'}">${d ? esc(d) : '아직 안 씀'}</span></li>`; }).join('')}</ul></div>`;
+  }).join('') || '<p class="text-slate-300 text-sm">비어 있음</p>';
+}
 function sheetHTML(cells){
   return SECTIONS.map(sec => {
     const items = sec.fields.filter(f => visible(f, sec, cells) && f.type !== 'simlink').map(f => {
       const v = cells[sec.id+'.'+f.k];
       let body;
-      if(!filled(v)) body = '<p class="text-slate-300 text-sm">비어 있음</p>';
+      if(f.type === 'worklog') body = workHTML(cells);
+      else if(!filled(v)) body = '<p class="text-slate-300 text-sm">비어 있음</p>';
+      else if(f.type === 'refs') body = `<ol class="list-decimal pl-5 space-y-2 text-sm">${v.filter(filledRow).map(r => { const a = APA.format(r); return `<li><b>${esc(r.w || '(용어 없음)')}</b>${r.d ? ` — <span class="whitespace-pre-wrap">${esc(r.d)}</span>` : ''}${r.rel ? `<br><span class="text-xs text-slate-500">필요한 곳: ${esc(r.rel)}</span>` : ''}<br>${a ? `<span class="text-xs text-slate-600"><b class="text-mint-700">APA</b> ${a.html}</span>` : '<span class="text-xs text-rose-400">출처 없음</span>'}</li>`; }).join('')}</ol>`;
       else if(f.type === 'sims') body = `<div class="space-y-3">${v.filter(r => r && r._id).map((r, i) => `<div class="rounded-xl bg-slate-50 p-3">
           <div class="flex flex-wrap items-center gap-2"><span class="text-xs font-bold text-mint-600">${i+1}</span>
             <span class="text-xs font-bold px-2 py-0.5 rounded-full ${r.kind === 'HTML' ? 'bg-amber-50 text-amber-700' : 'bg-sky-50 text-sky-700'}">${r.kind === 'HTML' ? 'HTML' : '파이썬'}</span>
@@ -716,6 +872,7 @@ function openDetail(id, subId){
   const t = DATA.teams.find(x => x.id === id); if(!t) return;
   if(!openTeam) lastFocus = document.activeElement;
   openTeam = id; $('dPw').value = ''; $('dPwMsg').textContent = '';
+  $('dDel').value = ''; $('dDelMsg').textContent = ''; $('dDelBtn').disabled = true; $('dDelName').textContent = `“${t.name}”`;
   const pb = $('dPwBtn'); delete pb.dataset.confirm; pb.textContent = '바꾸기';
   $('detailWrap').hidden = false; document.body.style.overflow = 'hidden'; document.body.classList.add('detail-open');
   if(subId) showSub(t, subId); else { view = 'now'; renderDetail(t); }
@@ -804,6 +961,25 @@ $('dFiles').addEventListener('click', async e => {
   }catch(err){ b.disabled = false; b.textContent = '다시'; }
 });
 
+/* 팀 지우기: 팀 이름을 그대로 적어야 버튼이 켜짐 */
+$('dDel').addEventListener('input', () => {
+  const t = DATA && DATA.teams.find(x => x.id === openTeam);
+  $('dDelBtn').disabled = !(t && $('dDel').value.trim() === t.name);
+});
+$('dDelBtn').addEventListener('click', async () => {
+  const t = DATA && DATA.teams.find(x => x.id === openTeam); if(!t) return;
+  const msg = $('dDelMsg'), btn = $('dDelBtn');
+  if($('dDel').value.trim() !== t.name) return;
+  btn.disabled = true; msg.textContent = '지우는 중…'; msg.className = 'text-sm mt-2 text-slate-500';
+  try{
+    const r = await rpc('ws_t_team_del', {p_key: KEY, p_team: t.id, p_confirm: $('dDel').value.trim()});
+    if(!r || !r.ok) throw new Error(r && r.error);
+    closeDetail();
+    await load(true);
+    banner(`${t.class}반 ${t.name} 팀을 지웠음.`, 'warn');
+  }catch(e){ msg.textContent = '지우지 못했음. 다시 시도할 것.'; msg.className = 'text-sm mt-2 text-rose-600'; btn.disabled = false; }
+});
+
 /* 비밀번호 새로 정하기 */
 $('dPwBtn').addEventListener('click', async () => {
   const pw = $('dPw').value, msg = $('dPwMsg'), btn = $('dPwBtn');
@@ -826,9 +1002,10 @@ $('btnCsv').addEventListener('click', () => {
   if(!DATA) return;
   const w = $('fWeek').value;
   const q = s => { let t = String(s==null?'':s); if(/^[=+\-@\t\r]/.test(t)) t = "'" + t; return `"${t.replace(/"/g,'""')}"`; };   // 엑셀 수식 실행 막기
-  const lines = [['반','팀','팀장','인원','진행률(%)','마지막 수정','제출','제출 시각','제출자','이번 주 한 것'].map(q).join(',')];
+  const lines = [['반','팀','팀장','인원','진행률(%)','마지막 수정','각자 한 일(작성/인원)','각자 한 일','제출','제출 시각','제출자','이번 주 한 것'].map(q).join(',')];
   teamsShown().forEach(t => { const s = lastSubOfWeek(t, w);
-    lines.push([t.class, t.name, leaderOf(t.cells), headcount(t.cells), progress(t.cells), t.last ? fmtTime(t.last) : '', s ? 'O' : 'X', s ? fmtTime(s.at) : '', s ? s.submitter : '', s ? s.note : ''].map(q).join(',')); });
+    const ws = workStat(t.cells, w);
+    lines.push([t.class, t.name, leaderOf(t.cells), headcount(t.cells), progress(t.cells), t.last ? fmtTime(t.last) : '', ws.total ? `${ws.done}/${ws.total}` : '', ws.all.map(x => `${x.who}: ${ws.did(x) || '(안 씀)'}`).join('\n'), s ? 'O' : 'X', s ? fmtTime(s.at) : '', s ? s.submitter : '', s ? s.note : ''].map(q).join(',')); });
   const blob = new Blob(['﻿' + lines.join('\r\n')], {type:'text/csv;charset=utf-8'});
   const a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = `워크시트_제출현황_${w}.csv`;
   document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 1000);
